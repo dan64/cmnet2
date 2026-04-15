@@ -28,15 +28,48 @@ pip install opencv-python pillow scikit-image tqdm numpy
 
 ---
 
-## Model Weights
-
-Place the pre-trained ColorMNet weights at:
+## Directory Structure
 
 ```
-weights/DINOv2FeatureV6_LocalAtten_s2_154000.pth
+cmnet2/
+├── weights/
+│   └── DINOv2FeatureV6_LocalAtten_s2_154000.pth   # ColorMNet pre-trained weights
+│
+├── models/
+│   ├── checkpoints/
+│   │   ├── dinov2_vits14_pretrain.pth              # DINOv2 ViT-S/14 backbone weights
+│   │   ├── resnet18-5c106cde.pth                   # ResNet18 pre-trained weights
+│   │   └── resnet50-19c8e357.pth                   # ResNet50 pre-trained weights
+│   │
+│   └── facebookresearch_dinov2_main/               # DINOv2 source code (required by torch.hub)
+│
+├── assets/                                         # sample inputs/outputs for testing
+├── colormnet/                                      # model source code
+├── test_imge.py                                    # single image colorization script
+├── test_video.py                                   # video colorization script
+└── test_video_slide.py                             # long video with sliding window
 ```
 
-DINOv2 backbone weights (~1.3 GB) are downloaded automatically from `torch.hub` on the first run.
+> **Note:** The `weights/` and `models/` directories are not included in the repository.
+> Download all required files from the [Releases page](https://github.com/dan64/cmnet2/releases/tag/v1.0.0) as described below.
+
+---
+
+## Download Model Weights
+
+Download the following files from the [v1.0.0 Release](https://github.com/dan64/cmnet2/releases/tag/v1.0.0) and place them in the correct directories:
+
+| File                                       | Destination           | Download                                                                                                      |
+| ------------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `DINOv2FeatureV6_LocalAtten_s2_154000.pth` | `weights/`            | [download](https://github.com/dan64/cmnet2/releases/download/v1.0.0/DINOv2FeatureV6_LocalAtten_s2_154000.pth) |
+| `dinov2_vits14_pretrain.pth`               | `models/checkpoints/` | [download](https://github.com/dan64/cmnet2/releases/download/v1.0.0/dinov2_vits14_pretrain.pth)               |
+| `resnet18-5c106cde.pth`                    | `models/checkpoints/` | [download](https://github.com/dan64/cmnet2/releases/download/v1.0.0/resnet18-5c106cde.pth)                    |
+| `resnet50-19c8e357.pth`                    | `models/checkpoints/` | [download](https://github.com/dan64/cmnet2/releases/download/v1.0.0/resnet50-19c8e357.pth)                    |
+| `facebookresearch_dinov2_main.zip`         | extract to `models/`  | [download](https://github.com/dan64/cmnet2/releases/download/v1.0.0/facebookresearch_dinov2_main.zip)         |
+
+> **Note:** `facebookresearch_dinov2_main/` contains the DINOv2 source code required by
+> `torch.hub` to instantiate the model. Extract the zip so that the folder is located at
+> `models/facebookresearch_dinov2_main/`.
 
 ---
 
@@ -53,7 +86,8 @@ python test_imge.py \
 
 ### Colorize a video (all references preloaded)
 
-Reference images must be named with the target frame number embedded in the filename (e.g. `ref_000040.jpg` → applies to frame 40).
+Reference images must be named with the target frame number embedded in the filename
+(e.g. `ref_000040.jpg` → applies to frame 40).
 
 ```bash
 python test_video.py \
@@ -62,11 +96,13 @@ python test_video.py \
   --output   assets/video/output.mp4
 ```
 
-All reference frames are preloaded into `perm_mem` before colorization begins. The first reference frame is also passed normally at frame 0 to initialize the working memory.
+All reference frames are preloaded into `perm_mem` before colorization begins.
+The first reference frame is also passed normally at frame 0 to initialize the working memory.
 
 ### Colorize a long video with sliding window
 
-For videos with more reference frames than the configured window size, use the sliding window script. References are loaded progressively as colorization advances through the video.
+For videos with more reference frames than the configured window size, use the sliding
+window script. References are loaded progressively as colorization advances through the video.
 
 ```bash
 python test_video_slide.py \
@@ -75,14 +111,15 @@ python test_video_slide.py \
   --output   assets/video_slide/output.mp4
 ```
 
-Configure the window in `test_video_slide.py`:
+Configure the window parameters at the top of `test_video_slide.py`:
 
 ```python
 WINDOW_SIZE = 500   # max reference frames kept in perm_mem at any time
 SLIDE_STEP  = 50    # frames removed/added per slide step
 ```
 
-The slide trigger is frame-id aware: the window advances when the current video frame surpasses the frame ID of the oldest reference that is no longer needed.
+The slide trigger is frame-id aware: the window advances when the current video frame
+surpasses the frame ID of the oldest reference that is no longer needed.
 
 ---
 
@@ -111,13 +148,13 @@ AB color channels → LAB → RGB → colorized frame
 
 ### Core classes
 
-| Class | File | Description |
-|---|---|---|
-| `ColorMNetRender` | `colormnet/colormnet_render.py` | Public API. Singleton. Handles GPU memory, reference management, sliding window. |
-| `InferenceCore` | `colormnet/inference/inference_core.py` | Frame-by-frame inference loop. Exposes `step()`, `step_AnyExemplar()`, `load_reference()`. |
-| `MemoryManager` | `colormnet/inference/memory_manager.py` | Manages `perm_mem`, `work_mem`, `long_mem`. Handles consolidation and sliding. |
-| `ColorMNet` | `colormnet/model/network.py` | Top-level `nn.Module`. |
-| `KeyEncoder_DINOv2_v6` | `colormnet/model/modules.py` | DINOv2 + ResNet50 fusion backbone. |
+| Class                  | File                                    | Description                                                                                |
+| ---------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `ColorMNetRender`      | `colormnet/colormnet_render.py`         | Public API. Singleton. Handles GPU memory, reference management, sliding window.           |
+| `InferenceCore`        | `colormnet/inference/inference_core.py` | Frame-by-frame inference loop. Exposes `step()`, `step_AnyExemplar()`, `load_reference()`. |
+| `MemoryManager`        | `colormnet/inference/memory_manager.py` | Manages `perm_mem`, `work_mem`, `long_mem`. Handles consolidation and sliding.             |
+| `ColorMNet`            | `colormnet/model/network.py`            | Top-level `nn.Module`.                                                                     |
+| `KeyEncoder_DINOv2_v6` | `colormnet/model/modules.py`            | DINOv2 + ResNet50 fusion backbone.                                                         |
 
 ---
 
@@ -155,13 +192,13 @@ colorizer.slide_permanent_memory(n_frames=50)     # evict oldest 50 refs
 
 ## Differences from the original ColorMNet
 
-| Feature | Original ColorMNet | CMNET2 |
-|---|---|---|
-| Memory stores | working + long-term | **permanent** + working + long-term |
-| Reference handling | passed with each frame | **preloadable in bulk** before inference |
-| Long video support | resets memory periodically | **sliding window** over permanent memory |
-| VRAM pressure response | full reset | **graduated**: slide 70% → full reset |
-| `reset_on_ref_update` | active | deprecated (permanent memory handles it) |
+| Feature                | Original ColorMNet         | CMNET2                                   |
+| ---------------------- | -------------------------- | ---------------------------------------- |
+| Memory stores          | working + long-term        | **permanent** + working + long-term      |
+| Reference handling     | passed with each frame     | **preloadable in bulk** before inference |
+| Long video support     | resets memory periodically | **sliding window** over permanent memory |
+| VRAM pressure response | full reset                 | **graduated**: slide 70% → full reset    |
+| `reset_on_ref_update`  | active                     | deprecated (permanent memory handles it) |
 
 ---
 
@@ -178,4 +215,5 @@ CMNET2 is based on:
 
 ## License
 
-This project inherits the license terms of the original ColorMNet repository. Please refer to the original repository for details.
+This project inherits the license terms of the original ColorMNet repository.
+Please refer to the [original repository](https://github.com/yyang181/colormnet) for details.
