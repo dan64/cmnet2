@@ -165,7 +165,6 @@ cython_debug/
 dist/
 weights/
 models/
-assets/
 __pycache__/
 *.pyc
 *.pth
