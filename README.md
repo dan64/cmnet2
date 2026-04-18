@@ -114,8 +114,8 @@ python test_video_slide.py \
 Configure the window parameters at the top of `test_video_slide.py`:
 
 ```python
-WINDOW_SIZE = 500   # max reference frames kept in perm_mem at any time
-SLIDE_STEP  = 50    # frames removed/added per slide step
+WINDOW_SIZE = 50   # max reference frames kept in perm_mem at any time
+SLIDE_STEP  = 5    # frames removed/added per slide step
 ```
 
 The slide trigger is frame-id aware: the window advances when the current video frame
