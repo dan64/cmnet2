@@ -104,7 +104,7 @@ def main():
     parser.add_argument('--input', default='./assets/video_full/sample_bw_full.mp4', help='video target')
     parser.add_argument('--ref_path', default='./assets/video_full/ref', help='color reference images')
     parser.add_argument('--output', default='./assets/video_full/sample_bw_full_cmnet2.mp4', help='Colorized output')
-    parser.add_argument('--max_side', type=int, default=384,
+    parser.add_argument('--max_side', type=int, default=512,
         help='Resize longest side to this value before colorization. '
              '-1 = original resolution (no resize).')
     parser.add_argument('--window_size', type=int, default=-1,
