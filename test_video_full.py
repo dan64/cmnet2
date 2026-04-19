@@ -75,10 +75,10 @@ def chroma_transfer(original_bgr: np.ndarray, colorized_small: Image.Image) -> n
 
 def compute_window_size_auto(colorizer, refs: list, ref_path: str,
                               proc_w: int, proc_h: int, do_resize: bool,
-                              vram_threshold: float = 0.05) -> int:
+                              vram_threshold: float = 0.20, max_window_size: int = 99) -> int:
     """
-    Preloads references one at a time until free VRAM
-    drops below vram_threshold (default 5%) of total.
+    Preloads references one at a time until free VRAM drops below vram_threshold (default 20%) of total,
+    or number of loaded reference frames is above max_window_size (default 99).
     Returns the number of loaded frames.
     """
     gpu_mem_free, gpu_mem_total = torch.cuda.mem_get_info()
@@ -87,13 +87,15 @@ def compute_window_size_auto(colorizer, refs: list, ref_path: str,
     for f in refs:
         gpu_mem_free, gpu_mem_total = torch.cuda.mem_get_info()
         gpu_mem_k = round(gpu_mem_free / 1024 / 1024, 1)
-        if gpu_mem_k < vram_limit:
+        if gpu_mem_k < vram_limit or loaded > max_window_size:
             break
         ref = Image.open(os.path.join(ref_path, f)).convert('RGB')
         if do_resize:
             ref = ref.resize((proc_w, proc_h), Image.LANCZOS)
         colorizer.preload_reference(ref)
         loaded += 1
+        if loaded % 10 == 0:
+            torch.cuda.empty_cache()  # empty cache from tensors not more referenced
     return loaded
 
 
@@ -107,7 +109,7 @@ def main():
              '-1 = original resolution (no resize).')
     parser.add_argument('--window_size', type=int, default=-1,
         help='Max reference frames in permanent memory. '
-             '-1 or 0 = auto (fills until 5%% VRAM free).')
+             '-1 or 0 = auto (fills until 20%% VRAM free).')
     parser.add_argument('--top_k', type=int, default=30,
         help='Top-K for memory matching softmax (default 30, try 10-15 for speed).')
     parser.add_argument('--mem_every', type=int, default=5,
