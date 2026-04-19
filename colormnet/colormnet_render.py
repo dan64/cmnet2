@@ -30,7 +30,7 @@ from colormnet.model.network import ColorMNet
 from colormnet.inference.inference_core import InferenceCore
 from colormnet.util.transforms import lab2rgb_transform_PIL
 
-DEF_MAX_MEMORY_FRAMES = 5000
+DEF_MAX_MEMORY_FRAMES = 1000
 
 import warnings
 
@@ -69,9 +69,12 @@ class ColorMNetRender:
 
     def __init__(self, image_size: int = -1, vid_length: int = None, enable_resize: bool = False,
                  encode_mode: int = None, propagate: bool = False, max_memory_frames: int = None,
-                 reset_on_ref_update: bool = True,  project_dir: str = None):
+                 reset_on_ref_update: bool = True, top_k: int = 30, mem_every: int = 5,
+                 project_dir: str = None):
 
         self.reset_on_ref_update = reset_on_ref_update  # deprecated with XMem2
+        self.top_k = top_k
+        self.mem_every = mem_every
         self.enable_resize = enable_resize
         if project_dir is None:
             project_dir = os.path.dirname(os.path.realpath(__file__))
@@ -118,8 +121,8 @@ class ColorMNetRender:
         self.config[
             'max_long_term_elements'] = self.max_memory_frames  # LT_max in paper, increase if objects disappear for a long time
         self.config['num_prototypes'] = 128  # P in paper
-        self.config['top_k'] = 30
-        self.config['mem_every'] = min(5, self.config[
+        self.config['top_k'] = self.top_k
+        self.config['mem_every'] = min(self.mem_every, self.config[
             'max_mid_term_frames'])  # r in paper. Increase to improve running speed
         self.config['deep_update_every'] = -1  # Leave -1 normally to synchronize with mem_every
         # Multi-scale options
@@ -180,8 +183,8 @@ class ColorMNetRender:
 
     def preload_reference(self, ref_img: Image):
         """
-        Precarica un reference frame in perm_mem prima di iniziare la colorazione.
-        Può essere chiamato N volte consecutivamente.
+        Preloads a reference frame into perm_mem before starting colorization.
+        Can be called N times consecutively.
         """
         if self.processor is None:
             return
@@ -198,14 +201,14 @@ class ColorMNetRender:
 
     def slide_permanent_memory(self, n_frames: int):
         """
-        Rimuove i primi n_frames reference frame dalla permanent memory.
-        Chiamare quando perm_mem supera la window size desiderata.
+        Removes the first n_frames reference frames from permanent memory.
+        Call when perm_mem exceeds the desired window size.
         """
         if self.processor is not None:
             self.processor.memory.slide_permanent_memory(n_frames)
 
     def get_perm_mem_frame_count(self) -> int:
-        """Restituisce il numero di reference frame attualmente in perm_mem."""
+        """Returns the number of reference frames currently in perm_mem."""
         if self.processor is not None:
             return self.processor.memory._perm_frame_count
         return 0
@@ -225,7 +228,7 @@ class ColorMNetRender:
     def get_frame_count(self) -> int:
         return self.frame_count
 
-    def colorize_frame(self, ti: int = None, frame_i: Image = None) -> Image:
+    def colorize_frame(self, ti: int = None, frame_i: Image = None, lab_mode: str = "gpu") -> Image:
 
         self.total_colored_frames += 1
 
@@ -252,7 +255,7 @@ class ColorMNetRender:
             data = self.get_image(ti, frame_i, self.ref_img_valid)
         else:
             if reset_cond_2:
-                # VRAM sotto soglia: slide aggressivo 70% di perm_mem
+                # VRAM below threshold: aggressive slide of 70% of perm_mem
                 n = int(self.get_perm_mem_frame_count() * 0.7)
                 self.slide_permanent_memory(n)
                 torch.cuda.empty_cache()
@@ -304,7 +307,7 @@ class ColorMNetRender:
             prob = F.interpolate(prob.unsqueeze(1), shape, mode='bilinear', align_corners=False)[:, 0]
 
         # return the colored frame
-        out_img_final = lab2rgb_transform_PIL(torch.cat([rgb[:1, :, :], prob], dim=0))
+        out_img_final = lab2rgb_transform_PIL(torch.cat([rgb[:1, :, :], prob], dim=0), mode = lab_mode)
         out_img_final = out_img_final * 255
         out_img_final = out_img_final.astype(np.uint8)
 

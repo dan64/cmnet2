@@ -45,10 +45,10 @@ class InferenceCore:
 
     def load_reference(self, ref_lll, ref_ab):
         """
-        Carica un reference frame in perm_mem senza colorare nulla.
-        Può essere chiamato N volte prima di iniziare la colorazione.
-        ref_lll: canale L replicato 3 volte (3*H*W) del frame di riferimento
-        ref_ab:  canali ab (2*H*W) del frame di riferimento
+        Loads a reference frame into perm_mem without colorizing anything.
+        Can be called N times before starting colorization.
+        ref_lll: L channel replicated 3 times (3*H*W) of the reference frame
+        ref_ab:  ab channels (2*H*W) of the reference frame
         """
         divide_by = 112
         ref_lll, pad = pad_divide_by(ref_lll, divide_by)

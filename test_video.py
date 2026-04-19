@@ -9,7 +9,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 import sys
 
-# Assicura che i moduli locali siano trovati
+# Ensures that local modules are found
 script_dir = Path(__file__).parent.resolve()
 if str(script_dir) not in sys.path:
     sys.path.insert(0, str(script_dir))
@@ -31,8 +31,8 @@ def pil_to_cv2(pil_image):
 def main():
     parser = ArgumentParser()
     parser.add_argument('--input', default='./assets/video/sample_bw.mp4', help='video target')
-    parser.add_argument('--ref_path', default='./assets/video/ref', help='immagini di riferimento a colori')
-    parser.add_argument('--output', default='./assets/video/sample_bw_cmnet2.mp4', help='Risultato colorizzato')
+    parser.add_argument('--ref_path', default='./assets/video/ref', help='color reference images')
+    parser.add_argument('--output', default='./assets/video/sample_bw_cmnet2.mp4', help='Colorized output')
     args = parser.parse_args()
 
     torch.hub.set_dir(model_dir)
@@ -42,7 +42,7 @@ def main():
 
     cap = cv2.VideoCapture(args.input)
     if not cap.isOpened():
-        print(f"Errore: Impossibile aprire il video {args.input}")
+        print(f"Error: Cannot open video {args.input}")
         return
 
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -56,11 +56,11 @@ def main():
 
     refs = sorted([f for f in os.listdir(args.ref_path) if f.lower().endswith(('.png', '.jpg'))])
 
-    print("--- Caricamento modello CMNET2 ---")
+    print("--- Loading CMNET2 model ---")
     colorizer = ColorMNetRender(vid_length=total_frames, enable_resize=False, encode_mode=1,
                                 max_memory_frames=total_frames, reset_on_ref_update=False, project_dir=package_dir)
 
-    print("Precaricamento reference...")
+    print("Preloading references...")
     for f in refs:
         ref_path = os.path.join(args.ref_path, f)
         ref = Image.open(ref_path).convert('RGB')
@@ -68,25 +68,25 @@ def main():
     print(f"perm_mem size: {colorizer.processor.memory.perm_mem.size}")
     first_ref = Image.open(os.path.join(args.ref_path, refs[0])).convert('RGB')
 
-    print(f"--- [VIDEO] Salvataggio di {total_frames} frames a colori ---")
+    print(f"--- [VIDEO] Saving {total_frames} color frames ---")
     for i in tqdm(range(total_frames)):
         ret, frame = cap.read()
         if not ret: break
 
-        # al primo frame passa il primo reference normalmente
+        # on the first frame, pass the first reference normally
         if i == 0:
             colorizer.set_ref_frame(first_ref)
         else:
             colorizer.set_ref_frame(None)
         # Frame
         rgb_frame = cv2_to_pil(frame)
-        img_color = colorizer.colorize_frame(ti=i, frame_i=rgb_frame)
+        img_color = colorizer.colorize_frame(ti=i, frame_i=rgb_frame, lab_mode="gpu")
         final_bgr = pil_to_cv2(img_color)
         out_video.write(final_bgr)
 
     cap.release()
     out_video.release()
-    print(f"\n--- [FINE] Video salvato in : {args.output} ---")
+    print(f"\n--- [DONE] Video saved to: {args.output} ---")
 
 if __name__ == '__main__':
     main()

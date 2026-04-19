@@ -55,29 +55,29 @@ class MemoryManager:
 
     def add_permanent_memory(self, key, shrinkage, value, objects):
         """
-        Aggiunge key/value alla permanent memory.
-        Questi frame non vengono mai rimossi né compressi.
+        Adds key/value to permanent memory.
+        These frames are never removed or compressed.
         """
-        # flatten spatial dimensions delle key
+        # flatten spatial dimensions of the keys
         key = key.flatten(start_dim=2)
         if shrinkage is not None:
             shrinkage = shrinkage.flatten(start_dim=2)
         # value: (B, num_objects, CV, H, W) -> (num_objects, CV, H*W)
-        # per allinearsi al formato di work_mem.value[gi]: (num_objects, CV, N)
-        value = value[0]  # rimuove batch dim: (2, 512, 49, 63)
+        # to align with the format of work_mem.value[gi]: (num_objects, CV, N)
+        value = value[0]  # removes batch dim: (2, 512, 49, 63)
         value = value.flatten(start_dim=2)  # -> (2, 512, 3087)
         self.perm_mem.add(key, value, shrinkage, None, objects)
         self._perm_frame_count += 1
 
     def slide_permanent_memory(self, n_frames: int):
         """
-        Rimuove i primi n_frames reference frame (i più vecchi) dalla permanent memory.
-        Usato per implementare la sliding window sui reference frame.
+        Removes the first n_frames reference frames (the oldest ones) from permanent memory.
+        Used to implement the sliding window on reference frames.
         """
         if not self.perm_mem.engaged():
             return
-        # calcola quanti elementi corrispondono a n_frames
-        # ogni frame occupa HW elementi nella dimensione N
+        # compute how many elements correspond to n_frames
+        # each frame occupies HW elements in dimension N
         frame_size = self.perm_mem.k.shape[-1] // self._perm_frame_count
         n = n_frames * frame_size
         if self.perm_mem.size <= n:
