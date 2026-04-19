@@ -30,7 +30,7 @@ from colormnet.model.network import ColorMNet
 from colormnet.inference.inference_core import InferenceCore
 from colormnet.util.transforms import lab2rgb_transform_PIL
 
-DEF_MAX_MEMORY_FRAMES = 1000
+DEF_MAX_MEMORY_FRAMES = 5000
 
 import warnings
 
