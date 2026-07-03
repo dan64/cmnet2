@@ -268,6 +268,16 @@ CMNET2 is based on:
 
 ---
 
+## Projects Using CMNET2
+
+CMNET2 is used as a core component in the following projects:
+
+- **[HAVCServerDiT](https://github.com/dan64/HAVCServerDiT)** — Hybrid Automatic Video Colorizer (HAVC) server that exposes a GPU-accelerated colorization pipeline for B&W images and video frames based on Diffusion Transformer (DiT) models, with CMNET2 as the exemplar-based backbone.
+- **[vs-cmnet2](https://github.com/dan64/vs-cmnet2)** — VapourSynth filter for exemplar-based video colorization using CMNET2.
+- **[vs-havc](https://github.com/dan64/vs-havc)** — A Deep Learning based VapourSynth filter for colorizing and restoring old images and video, based on DeOldify, DDColor, ColorMNet/CMNET2 and DeepRemaster.
+
+---
+
 ## License
 
 This project inherits the license terms of the original ColorMNet repository.
