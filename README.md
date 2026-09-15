@@ -181,7 +181,7 @@ python test_video_full.py \
 | Parameter       | Default | Description                                                                         |
 | --------------- | ------- | ----------------------------------------------------------------------------------- |
 | `--max_side`    | `-1`    | Resize longest side before colorization. `-1` = original resolution.                |
-| `--window_size` | `-1`    | Max reference frames in `perm_mem`. `-1` or `0` = auto (fills until 15% VRAM free). |
+| `--window_size` | `-1`    | Max reference frames in `perm_mem`. `-1` or `0` = auto (fills until 30% VRAM free). |
 | `--top_k`       | `30`    | Top-K for memory matching softmax. Lower = faster, less accurate.                   |
 | `--mem_every`   | `5`     | Store a colorized frame in working memory every N frames.                           |
 | `--backbone`    | `dinov3`| Key encoder backbone: `dinov2` or `dinov3` (see [Model Variants](#model-variants)).  |
@@ -248,8 +248,8 @@ B&W film footage. Measured on a 131-clip validation set (full frames, `--max_sid
 | Metric | DINOv2 (baseline) | DINOv3 (fine-tuned) | Δ |
 | --- | ---: | ---: | ---: |
 | PSNR | 37.62 dB | **38.04 dB** | +0.42 dB |
-| CIEDE2000 (mean) | 3.36 | **3.18** | -0.18 |
-| CIEDE2000 (p90) | 7.25 | **6.80** | -0.45 |
+| CIEDE2000 (mean) | 3.36 | **3.18** | -0.18 (5% better) |
+| CIEDE2000 (p90) | 7.25 | **6.80** | -0.45 (6% better) |
 
 DINOv3 improves on both metrics on ~80-85% of individual clips, with no systematic weakness
 on either natural-content (DAVIS) or archival-film clips. Inference is also preliminarily
