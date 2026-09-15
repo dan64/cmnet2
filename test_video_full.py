@@ -75,10 +75,10 @@ def chroma_transfer(original_bgr: np.ndarray, colorized_small: Image.Image) -> n
 
 def compute_window_size_auto(colorizer, refs: list, ref_path: str,
                               proc_w: int, proc_h: int, do_resize: bool,
-                              vram_threshold: float = 0.20, max_window_size: int = 99) -> int:
+                              vram_threshold: float = 0.30, max_window_size: int = 50) -> int:
     """
     Preloads references one at a time until free VRAM drops below vram_threshold (default 20%) of total,
-    or number of loaded reference frames is above max_window_size (default 99).
+    or number of loaded reference frames is above max_window_size (default 50).
     Returns the number of loaded frames.
     """
     gpu_mem_free, gpu_mem_total = torch.cuda.mem_get_info()
@@ -107,9 +107,9 @@ def main():
     parser.add_argument('--max_side', type=int, default=512,
         help='Resize longest side to this value before colorization. '
              '-1 = original resolution (no resize).')
-    parser.add_argument('--window_size', type=int, default=40,
+    parser.add_argument('--window_size', type=int, default=20,
         help='Max reference frames in permanent memory. '
-             '-1 or 0 = auto (fills until 20%% VRAM free).')
+             '-1 or 0 = auto (fills until 30%% VRAM free).')
     parser.add_argument('--top_k', type=int, default=30,
         help='Top-K for memory matching softmax (default 30, try 10-15 for speed).')
     parser.add_argument('--mem_every', type=int, default=5,
