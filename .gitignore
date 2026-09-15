@@ -163,8 +163,8 @@ cython_debug/
 
 # Project Folders 
 dist/
-#weights/
-#models/
+weights/
+models/
 __pycache__/
 *.pyc
 *.pth
