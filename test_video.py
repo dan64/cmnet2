@@ -33,6 +33,8 @@ def main():
     parser.add_argument('--input', default='./assets/video/sample_bw.mp4', help='video target')
     parser.add_argument('--ref_path', default='./assets/video/ref', help='color reference images')
     parser.add_argument('--output', default='./assets/video/sample_bw_cmnet2.mp4', help='Colorized output')
+    parser.add_argument('--backbone', choices=['dinov2', 'dinov3'], default='dinov3',
+                        help='Key encoder backbone (default: dinov3)')
     args = parser.parse_args()
 
     torch.hub.set_dir(model_dir)
@@ -58,7 +60,8 @@ def main():
 
     print("--- Loading CMNET2 model ---")
     colorizer = ColorMNetRender(vid_length=total_frames, enable_resize=False, encode_mode=1,
-                                max_memory_frames=total_frames, reset_on_ref_update=False, project_dir=package_dir)
+                                max_memory_frames=total_frames, reset_on_ref_update=False, project_dir=package_dir,
+                                backbone=args.backbone)
 
     print("Preloading references...")
     for f in refs:

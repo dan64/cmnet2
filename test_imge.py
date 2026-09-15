@@ -26,6 +26,8 @@ def main():
     parser.add_argument('--input', default='./assets/image/image_bw.jpg', help='Target image (grayscale or color, L channel will be extracted)')
     parser.add_argument('--ref', default='./assets/image/image_color_ref.jpg', help='Color reference image')
     parser.add_argument('--output', default='./assets/image/image_bw_cmnet2.jpg', help='Colorized output')
+    parser.add_argument('--backbone', choices=['dinov2', 'dinov3'], default='dinov3',
+                        help='Key encoder backbone (default: dinov3)')
     args = parser.parse_args()
 
     torch.hub.set_dir(model_dir)
@@ -33,7 +35,7 @@ def main():
     torch.backends.cudnn.benchmark = True
     torch.set_grad_enabled(False)
 
-    # 1. Caricamento immagini
+    # 1. Image loading
     ref_raw = Image.open(args.ref).convert('RGB')
     target_raw = Image.open(args.input).convert('RGB')
     if ref_raw is None or target_raw is None:
@@ -42,7 +44,7 @@ def main():
 
     print("--- Loading CMNET2 model ---")
     colorizer = ColorMNetRender(vid_length=1, enable_resize=False, encode_mode=1, max_memory_frames=100,
-                                reset_on_ref_update=False, project_dir=package_dir)
+                                reset_on_ref_update=False, project_dir=package_dir, backbone=args.backbone)
 
     colorizer.set_ref_frame(ref_raw, False)
     img_color = colorizer.colorize_frame(ti=0, frame_i=target_raw, lab_mode="gpu")

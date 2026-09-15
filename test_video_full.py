@@ -114,6 +114,8 @@ def main():
         help='Top-K for memory matching softmax (default 30, try 10-15 for speed).')
     parser.add_argument('--mem_every', type=int, default=5,
         help='Store a frame in working memory every N frames (default 5, try 10 for speed).')
+    parser.add_argument('--backbone', choices=['dinov2', 'dinov3'], default='dinov3',
+        help='Key encoder backbone (default: dinov3)')
     args = parser.parse_args()
 
     torch.hub.set_dir(model_dir)
@@ -154,7 +156,7 @@ def main():
     print("--- Loading CMNET2 model ---")
     colorizer = ColorMNetRender(vid_length=total_frames, encode_mode=1, max_memory_frames=total_frames,
                                 reset_on_ref_update=False, top_k=args.top_k, mem_every=args.mem_every,
-                                project_dir=package_dir)
+                                project_dir=package_dir, backbone=args.backbone)
 
     # phase 1: preload the first WINDOW_SIZE references
     print("Preloading references...")

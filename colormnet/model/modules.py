@@ -156,7 +156,8 @@ class ValueEncoder(nn.Module):
         return g, h
 
 class KeyEncoder_DINOv2_v6(nn.Module):
-    def __init__(self):
+    def __init__(self, backbone: str = "dinov2", dinov3_weights_dir: str = None,
+                 unlock_backbone: bool = False):
         super().__init__()
         network = resnet.resnet50(pretrained=True)
         self.conv1 = network.conv1
@@ -168,7 +169,18 @@ class KeyEncoder_DINOv2_v6(nn.Module):
         self.layer2 = network.layer2 # 1/8, 512
         self.layer3 = network.layer3 # 1/16, 1024
 
-        self.network2 = resnet.Segmentor()
+        if backbone == "dinov2":
+            self.network2 = resnet.Segmentor()
+        elif backbone == "dinov3":
+            if not dinov3_weights_dir:
+                raise ValueError("dinov3_weights_dir is required when backbone='dinov3' "
+                                  "(no fallback to the global HuggingFace cache)")
+            # unlock_backbone: default False, unchanged behavior (frozen
+            # backbone) - see Segmentor_DINOv3 for details on what changes
+            # when True.
+            self.network2 = resnet.Segmentor_DINOv3(dinov3_weights_dir, unlock_backbone=unlock_backbone)
+        else:
+            raise ValueError(f"unknown backbone: {backbone!r} (allowed values: 'dinov2', 'dinov3')")
 
         self.fuse1 = resnet.Fuse(384 * 4, 1024) # n = [8, 9, 10, 11]
         self.fuse2 = resnet.Fuse(384 * 4, 512)

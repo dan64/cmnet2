@@ -6,6 +6,8 @@ During evaluation, it is used by inference_core.py
 It further depends on modules.py which gives more detailed implementations of sub-modules
 """
 
+import logging
+
 import torch
 import torch.nn as nn
 
@@ -14,6 +16,8 @@ from colormnet.model.modules import *
 from colormnet.model.memory_util import *
 
 from colormnet.model.attention import LocalGatedPropagation
+
+logger = logging.getLogger(__name__)
 
 class ColorMNet(nn.Module):
     def __init__(self, config, model_path=None, map_location=None):
@@ -27,7 +31,16 @@ class ColorMNet(nn.Module):
         self.single_object = config.get('single_object', False)
         # print(f'Single object mode: {self.single_object}')
 
-        self.key_encoder = KeyEncoder_DINOv2_v6()
+        self.backbone = config.get('backbone', 'dinov2')
+        # unlock_backbone: default False (config.get(..., False), never the
+        # implicit default) - the choice is made HERE, at model construction,
+        # BEFORE trainer.py builds the optimizer (ColorMNetTrainer.__init__
+        # builds the model at line 90 and the optimizer only at lines
+        # 102-103) - so requires_grad is already in its final state when
+        # AdamW filters the parameters: no reordering needed in trainer.py.
+        self.key_encoder = KeyEncoder_DINOv2_v6(backbone=self.backbone,
+                                                 dinov3_weights_dir=config.get('dinov3_weights_dir'),
+                                                 unlock_backbone=config.get('unlock_backbone', False))
 
         self.value_encoder = ValueEncoder(self.value_dim, self.hidden_dim, self.single_object)
 
@@ -221,4 +234,63 @@ class ColorMNet(nn.Module):
                     #   print('Zero-initialized padding.')
                     src_dict[k] = torch.cat([src_dict[k], pads], 1)
 
-        self.load_state_dict(src_dict)
+        if getattr(self, 'backbone', 'dinov2') == 'dinov3':
+            # Shape-compatibility filter (no longer a blanket drop by prefix).
+            # network2 can contain mutually incompatible structures (Segmentor DINOv2
+            # vs Segmentor_DINOv3: different names, but also 2 keys with the SAME
+            # name and different shape, e.g. 'backbone.norm.weight'/'bias' 384 vs
+            # 768). strict=False alone is not enough: PyTorch still raises a
+            # RuntimeError on a shape mismatch for a key that exists in both
+            # state_dicts, regardless of strict. So only what is truly incompatible
+            # with the already-instantiated model is discarded, not the entire
+            # 'key_encoder.network2.*' prefix regardless - this lets a genuine
+            # dinov3 checkpoint (fused or trained) actually be reloaded when its
+            # keys match.
+            own_state = self.state_dict()
+            NETWORK2_PREFIX = 'key_encoder.network2.'
+            filtered = {}
+            for k, v in src_dict.items():
+                if not k.startswith(NETWORK2_PREFIX):
+                    filtered[k] = v
+                    continue
+                if k not in own_state:
+                    logger.warning(
+                        "load_weights (backbone=dinov3): key '%s' absent from the "
+                        "current model, discarded (checkpoint shape=%s)", k, tuple(v.shape))
+                    continue
+                if tuple(v.shape) != tuple(own_state[k].shape):
+                    logger.warning(
+                        "load_weights (backbone=dinov3): key '%s' with incompatible "
+                        "shape (checkpoint=%s, expected=%s), discarded",
+                        k, tuple(v.shape), tuple(own_state[k].shape))
+                    continue
+                filtered[k] = v
+            result = self.load_state_dict(filtered, strict=False)
+            # strict=False (needed above for the legitimate network2 filter)
+            # also acted as a silent safety net for a completely wrong file
+            # (e.g. a raw training checkpoint - first-level keys
+            # 'effective_step'/'model'/'optimizer'/'scaler'/'scheduler', none
+            # of which matches a real parameter): no real weight gets loaded,
+            # but no error/warning signals it, the model stays at random
+            # initialization. Threshold: the only LEGITIMATE exclusion of the
+            # network2 prefix (the DinoV3 backbone, ~86M/190M total parameters
+            # - about 45%) is the highest expected "missing" case in a correct
+            # load; 90% stays well above that margin (2x), discarding only the
+            # near-total mismatch case (no real weight in common, typically
+            # >99% "missing" for a wholly foreign file), without touching a
+            # legitimate load even in the extreme case of only the backbone
+            # being incompatible.
+            MISSING_FRACTION_THRESHOLD = 0.90
+            missing_fraction = len(result.missing_keys) / len(own_state)
+            if missing_fraction > MISSING_FRACTION_THRESHOLD:
+                raise RuntimeError(
+                    f"load_weights: {len(result.missing_keys)}/{len(own_state)} "
+                    f"model parameters ({missing_fraction:.0%}) were left "
+                    f"unmatched in the provided file - the provided file looks like "
+                    f"a raw training checkpoint (first-level keys like "
+                    f"'effective_step'/'model'/'optimizer'/'scaler'/'scheduler'), not "
+                    f"a weights-only file. Check the path, or export the weights "
+                    f"with training/export_weights.py."
+                )
+        else:
+            self.load_state_dict(src_dict)

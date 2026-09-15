@@ -70,8 +70,11 @@ class ColorMNetRender:
     def __init__(self, image_size: int = -1, vid_length: int = None, enable_resize: bool = False,
                  encode_mode: int = None, propagate: bool = False, max_memory_frames: int = None,
                  reset_on_ref_update: bool = True, top_k: int = 30, mem_every: int = 5,
-                 project_dir: str = None):
+                 project_dir: str = None, backbone: str = "dinov3"):
 
+        if backbone not in ("dinov2", "dinov3"):
+            raise ValueError(f"unknown backbone: {backbone!r} (allowed values: 'dinov2', 'dinov3')")
+        self.backbone = backbone
         self.reset_on_ref_update = reset_on_ref_update  # deprecated with XMem2
         self.top_k = top_k
         self.mem_every = mem_every
@@ -106,9 +109,23 @@ class ColorMNetRender:
         torch.autograd.set_grad_enabled(False)
 
         self.config = {}
-        # model checkpoint location
-        self.config['model'] = model_dir = path.join(self.project_dir,
-                                                     'weights/DINOv2FeatureV6_LocalAtten_s2_154000.pth')
+        self.config['backbone'] = self.backbone
+        # model checkpoint location (depends on the selected backbone)
+        if self.backbone == 'dinov3':
+            # p369412: trained checkpoint (step 26000, PSNR 36.9412 on
+            # VAL_SUBSET_20, after the BN fix), exported from
+            # training/export_weights.py - no longer *_untrained.pth (which
+            # only had the never-trained backbone/proj, used until a real
+            # production checkpoint existed).
+            self.config['model'] = model_dir = path.join(self.project_dir,
+                                                         'weights/DINOv3FeatureV6_LocalAtten_p369412.pth')
+            # local project path, NEVER the canonical HuggingFace name (that
+            # depends on the user's global cache and is not self-contained in
+            # the repo, unlike how all the other weights are managed)
+            self.config['dinov3_weights_dir'] = path.join(self.project_dir, 'weights', 'dinov3-vitb16')
+        else:
+            self.config['model'] = model_dir = path.join(self.project_dir,
+                                                         'weights/DINOv2FeatureV6_LocalAtten_s2_154000.pth')
         # Whether the provided reference frame is exactly the first input frame
         self.config['FirstFrameIsNotExemplar'] = not propagate
         # dataset setting

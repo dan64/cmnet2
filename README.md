@@ -4,6 +4,16 @@
 
 ---
 
+## 📢 What's New
+
+**2026-09-15 — Added DinoV3 backbone.** CMNET2 now supports a fully fine-tuned DINOv3 ViT-B/16
+key-encoder backbone as an alternative to the original frozen DINOv2 ViT-S/14, improving both
+PSNR and perceptual color accuracy (CIEDE2000) with a preliminary ~10% faster inference. See
+[Model Variants](#model-variants) for the full comparison and [Key Features](#key-features)
+below for a summary.
+
+---
+
 ## Key Features
 
 - **Reference-based colorization** : propagates color from one or more colored reference frames to a grayscale video, operating in the LAB color space for perceptual accuracy.
@@ -12,6 +22,7 @@
 - **Sliding window memory management** : for long videos with thousands of reference frames, a configurable sliding window evicts the oldest references and loads new ones as the video progresses, keeping VRAM usage bounded.
 - **Adaptive VRAM management** : gradual memory pressure response: slides 70% of permanent memory when VRAM drops below 500 MB, full reset only as a last resort below 100 MB.
 - **DINOv2 + ResNet50 fusion backbone** : multi-scale key features are extracted by fusing DINOv2 ViT-S/14 semantic features with ResNet50 spatial features at 1/4, 1/8, and 1/16 scales.
+- **DINOv3 backbone (default, recommended)** : an alternative key-encoder backbone using a fully fine-tuned DINOv3 ViT-B/16 in place of the frozen DINOv2 ViT-S/14, trained end-to-end on the same reference-based colorization loss. Improves both PSNR and perceptual color accuracy (CIEDE2000) across a 131-clip validation set spanning DAVIS and archival B&W film footage, with a preliminary ~10% faster inference (see [Model Variants](#model-variants)).
 - **GPU-accelerated LAB→RGB conversion** : `lab2rgb` implemented with exact CIE formulas on GPU via PyTorch, replacing the CPU-bound skimage conversion (-14% total frame time).
 - **Chroma transfer pipeline** : optional input resize + YUV chroma transfer for a 3× speedup on full-resolution videos, with no perceptible quality loss.
 
@@ -25,7 +36,7 @@
 
 ```bash
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install opencv-python pillow scikit-image tqdm numpy
+pip install opencv-python pillow scikit-image tqdm numpy transformers
 ```
 
 ---
@@ -35,7 +46,9 @@ pip install opencv-python pillow scikit-image tqdm numpy
 ```
 cmnet2/
 ├── weights/
-│   └── DINOv2FeatureV6_LocalAtten_s2_154000.pth   # ColorMNet pre-trained weights
+│   ├── DINOv2FeatureV6_LocalAtten_s2_154000.pth   # ColorMNet pre-trained weights (DINOv2 backbone)
+│   ├── DINOv3FeatureV6_LocalAtten_p369412.pth     # Fine-tuned weights (DINOv3 backbone, recommended)
+│   └── dinov3-vitb16/                              # DINOv3 ViT-B/16 backbone (HuggingFace format)
 │
 ├── models/
 │   ├── checkpoints/
@@ -61,13 +74,15 @@ cmnet2/
 ```
 
 > **Note:** The `weights/` and `models/` directories are not included in the repository.
-> Download all required files from the [Releases page](https://github.com/dan64/cmnet2/releases/tag/v1.0.0) as described below.
+> Download all required files from the [Releases page](https://github.com/dan64/cmnet2/releases) as described below.
 
 ---
 
 ## Download Model Weights
 
-Download the following files from the [v1.0.0 Release](https://github.com/dan64/cmnet2/releases/tag/v1.0.0) and place them in the correct directories:
+Download the following files and place them in the correct directories (DINOv2 files are on the
+[v1.0.0 Release](https://github.com/dan64/cmnet2/releases/tag/v1.0.0), DINOv3 files on the
+[v1.1.0 Release](https://github.com/dan64/cmnet2/releases/tag/v1.1.0)):
 
 | File                                       | Destination           | Download                                                                                                      |
 | ------------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -76,6 +91,8 @@ Download the following files from the [v1.0.0 Release](https://github.com/dan64/
 | `resnet18-5c106cde.pth`                    | `models/checkpoints/` | [download](https://github.com/dan64/cmnet2/releases/download/v1.0.0/resnet18-5c106cde.pth)                    |
 | `resnet50-19c8e357.pth`                    | `models/checkpoints/` | [download](https://github.com/dan64/cmnet2/releases/download/v1.0.0/resnet50-19c8e357.pth)                    |
 | `facebookresearch_dinov2_main.zip`         | extract to `models/`  | [download](https://github.com/dan64/cmnet2/releases/download/v1.0.0/facebookresearch_dinov2_main.zip)         |
+| `DINOv3FeatureV6_LocalAtten_p369412.pth`   | `weights/`            | [download](https://github.com/dan64/cmnet2/releases/download/v1.1.0/DINOv3FeatureV6_LocalAtten_p369412.pth) |
+| `dinov3-vitb16.zip`                        | extract to `weights/` | [download](https://github.com/dan64/cmnet2/releases/download/v1.1.0/dinov3-vitb16.zip)                       |
 
 > **Note:** `facebookresearch_dinov2_main/` contains the DINOv2 source code required by
 > `torch.hub` to instantiate the model. Extract the zip so that the folder is located at
@@ -109,6 +126,28 @@ python test_video.py \
 All reference frames are preloaded into `perm_mem` before colorization begins.
 The first reference frame is also passed normally at frame 0 to initialize the working memory.
 
+### Colorize a video with basic sliding window (`test_video_slide.py`)
+
+A minimal sliding-window example: fixed `WINDOW_SIZE=6` / `SLIDE_STEP=3` (hardcoded, not
+CLI-configurable), no resize, no chroma transfer, no profiling. Useful to read the sliding
+window logic without the extra machinery of `test_video_full.py`.
+
+```bash
+python test_video_slide.py \
+  --input    assets/video_slide/sample_bw.mp4 \
+  --ref_path assets/video_slide/ref/ \
+  --output   assets/video_slide/output.mp4
+```
+
+**Differences from `test_video_full.py`:**
+
+| Aspect | `test_video_slide.py` | `test_video_full.py` |
+| --- | --- | --- |
+| Resize / chroma transfer | none — always full resolution | `--max_side` + YUV chroma transfer for speed |
+| Window size | fixed `WINDOW_SIZE=6`, `SLIDE_STEP=3` (hardcoded) | `--window_size`, auto VRAM-aware mode available |
+| `top_k` / `mem_every` | fixed at `ColorMNetRender` defaults | CLI-configurable |
+| Profiling | none | per-phase timing + estimated FPS on first 50 frames |
+
 ### Colorize a long video with sliding window (`test_video_full.py`)
 
 The main script for production use. Supports long videos with hundreds of reference frames,
@@ -120,8 +159,22 @@ python test_video_full.py \
   --ref_path    assets/video_full/ref/ \
   --output      assets/video_full/output.mp4 \
   --max_side    512 \
-  --window_size 100
+  --window_size 20
 ```
+
+> **Choosing `--window_size`:** a wider permanent-memory window is not
+> always better. If the window holds many reference frames that look
+> visually similar to each other but have different colors — typical with
+> sparse reference extraction (≈1 frame/sec or less) on scenes with large,
+> uniform-colored surfaces — the top-k memory matching can end up averaging
+> conflicting colors instead of picking the right one, washing the result
+> toward gray. This shows up mainly when combined with a small `--max_side`
+> (less local detail available to tell similar-looking references apart),
+> not from either factor alone. As a starting point, `--window_size` between
+> 20 and 50 works well for most content; go higher only if your reference
+> frames are extracted densely (redundant, not conflicting), or lower
+> `--top_k` (e.g. 10-15) if you need to keep a wide window regardless.
+
 
 **CLI parameters:**
 
@@ -131,6 +184,7 @@ python test_video_full.py \
 | `--window_size` | `-1`    | Max reference frames in `perm_mem`. `-1` or `0` = auto (fills until 15% VRAM free). |
 | `--top_k`       | `30`    | Top-K for memory matching softmax. Lower = faster, less accurate.                   |
 | `--mem_every`   | `5`     | Store a colorized frame in working memory every N frames.                           |
+| `--backbone`    | `dinov3`| Key encoder backbone: `dinov2` or `dinov3` (see [Model Variants](#model-variants)).  |
 
 **Performance profile** on a 960×730 clip with 158 reference frames (RTX 5070 Ti, 16 GB VRAM):
 
@@ -146,7 +200,7 @@ python test_video_full.py \
 ```
 Grayscale input frame (L channel in LAB)
     ↓
-KeyEncoder  ←  ResNet50 (1/4, 1/8, 1/16) + DINOv2 ViT-S/14 (fused via Fuse blocks)
+KeyEncoder  ←  ResNet50 (1/4, 1/8, 1/16) + DINOv2 ViT-S/14 or DINOv3 ViT-B/16 (fused via Fuse blocks)
     ↓
 Key / Shrinkage / Selection tensors
     ↓
@@ -174,7 +228,32 @@ Chroma transfer: L from original full-size + UV from colorized resized → final
 | `InferenceCore`        | `colormnet/inference/inference_core.py` | Frame-by-frame inference loop. Exposes `step()`, `step_AnyExemplar()`, `load_reference()`. |
 | `MemoryManager`        | `colormnet/inference/memory_manager.py` | Manages `perm_mem`, `work_mem`, `long_mem`. Handles consolidation and sliding.             |
 | `ColorMNet`            | `colormnet/model/network.py`            | Top-level `nn.Module`.                                                                     |
-| `KeyEncoder_DINOv2_v6` | `colormnet/model/modules.py`            | DINOv2 + ResNet50 fusion backbone.                                                         |
+| `KeyEncoder_DINOv2_v6` | `colormnet/model/modules.py`            | DINOv2 or DINOv3 + ResNet50 fusion backbone, selected via `backbone` (see [Model Variants](#model-variants)). |
+
+---
+
+## Model Variants
+
+CMNET2 ships with two interchangeable key-encoder backbones:
+
+| Backbone | Weights file | Status |
+| --- | --- | --- |
+| DINOv2 ViT-S/14 (frozen) | `DINOv2FeatureV6_LocalAtten_s2_154000.pth` | Original, kept for backward compatibility |
+| DINOv3 ViT-B/16 (fully fine-tuned) | `DINOv3FeatureV6_LocalAtten_p369412.pth` | **Recommended** |
+
+The DINOv3 variant was fine-tuned end-to-end (backbone included) on the same reference-based
+colorization loss used for the original ColorMNet training, using a mix of DAVIS and archival
+B&W film footage. Measured on a 131-clip validation set (full frames, `--max_side` disabled):
+
+| Metric | DINOv2 (baseline) | DINOv3 (fine-tuned) | Δ |
+| --- | ---: | ---: | ---: |
+| PSNR | 37.62 dB | **38.04 dB** | +0.42 dB |
+| CIEDE2000 (mean) | 3.36 | **3.18** | -0.18 |
+| CIEDE2000 (p90) | 7.25 | **6.80** | -0.45 |
+
+DINOv3 improves on both metrics on ~80-85% of individual clips, with no systematic weakness
+on either natural-content (DAVIS) or archival-film clips. Inference is also preliminarily
+~10% faster on the same hardware.
 
 ---
 
@@ -240,6 +319,13 @@ are transferred back to the original frame via YUV chroma transfer:
 
 This yields a **3× speedup** (1.94 → 5.80 FPS on 960×730) with no perceptible quality loss on the color channels.
 
+### DINOv3 backbone
+
+See [Model Variants](#model-variants) for the full quality comparison. Beyond the quality
+improvement, early benchmarks show inference running ~10% faster than the DINOv2 backbone
+on the same hardware, likely due to the different key-encoder architecture — not yet
+confirmed as a controlled measurement.
+
 ---
 
 ## Differences from the original ColorMNet
@@ -265,6 +351,7 @@ CMNET2 is based on:
 - **XMem** : [hkchengrex/XMem](https://github.com/hkchengrex/XMem)
 - **XMem++** : [mbzuai-metaverse/XMem2](https://github.com/mbzuai-metaverse/XMem2)
 - **DINOv2** : [facebookresearch/dinov2](https://github.com/facebookresearch/dinov2)
+- **DINOv3** : [facebookresearch/dinov3](https://github.com/facebookresearch/dinov3)
 
 ---
 

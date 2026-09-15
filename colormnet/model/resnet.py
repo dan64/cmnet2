@@ -5,6 +5,7 @@ We append extra channels to the first conv by some network surgery
 
 from collections import OrderedDict
 import math
+import types
 
 import torch
 import torch.nn as nn
@@ -17,6 +18,7 @@ warnings.filterwarnings("ignore")
 import torch.nn.functional as F
 
 from einops import rearrange
+from transformers import AutoModel
 
 def load_weights_add_extra_dim(target, source_state, extra_dim=1):
     new_dict = OrderedDict()
@@ -244,6 +246,119 @@ class Segmentor(nn.Module):
             f16 = F.interpolate(f16, size=new_size, mode='bilinear', align_corners=False) # scale_factor=3.5
 
         return f16
+
+# Reference HuggingFace repo id of the backbone already materialized locally
+# in weights/dinov3-vitb16/ (config.json + model.safetensors, self-contained in
+# the repo like all the other weights of the project). Used only as a
+# reminder/for an eventual re-download, NOT for runtime loading (which always
+# requires an explicit local path, never the canonical HF name: that name
+# depends on the user's global cache and is not self-contained in the repo).
+DINOV3_DEFAULT_MODEL = "facebook/dinov3-vitb16-pretrain-lvd1689m"
+
+class Segmentor_DINOv3(nn.Module):
+    """
+    Drop-in replacement for Segmentor (DINOv2 ViT-S/14): same output,
+    (B, 1536, H/16, W/16), same interface towards Fuse.
+    Backbone: DINOv3 ViT-B/16, loaded from a local project directory
+    (weights/dinov3-vitb16/, config.json + model.safetensors), NEVER from
+    the user's global HuggingFace cache.
+
+    unlock_backbone=False (default, unchanged behavior): frozen (eval +
+    requires_grad_(False) + no_grad in forward). The proj Conv1x1 3072->1536
+    is randomly initialized: NOT trained.
+
+    unlock_backbone=True (controlled by --unlock_backbone in train_dinov3.py
+    - NEVER the default, must be passed explicitly): trainable backbone
+    (requires_grad_(True), no_grad removed from the forward) + HuggingFace
+    gradient checkpointing (gradient_checkpointing_enable(), no manual
+    checkpointing - verified ~2GB savings on the single-step VRAM peak,
+    probe in training/verify/vram_probe_backbone_unlock.py). The backbone is
+    also forced permanently in train() mode (instance override, see below)
+    - necessary because trainer.py:549 (pre-existing quirk: the trainer's
+    train() calls self.model.eval() on the ENTIRE model before every
+    forward, not only for inference) would otherwise put the backbone back
+    in eval() at every single do_pass() call, silently disabling
+    HuggingFace's internal gate for gradient checkpointing ('if
+    self.gradient_checkpointing and self.training') - discovered empirically
+    in the probe (an assert on backbone.training failed without this fix).
+    No correctness impact: the loaded DinoV3 backbone has dropout/drop_path
+    at 0.0 (weights/dinov3-vitb16/config.json), so always staying in train()
+    instead of real eval() during do_val() is harmless (no dropout to
+    disable).
+    """
+    LAYERS     = [8, 9, 10, 11]   # last 4 layers of the ViT-B (12 total)
+    EMBED_DIM  = 768               # hidden_size of the backbone
+    PATCH_SIZE = 16
+    OUT_CH     = 1536              # keeps the Fuse interface (dine_feat = 384*4)
+    NUM_REG    = 4                 # num_register_tokens of the backbone
+
+    def __init__(self, weights_dir: str, unlock_backbone: bool = False):
+        super().__init__()
+        self.unlock_backbone = unlock_backbone
+        self.backbone = AutoModel.from_pretrained(
+            weights_dir,
+            local_files_only=True,
+        )
+
+        if not unlock_backbone:
+            self.backbone.eval()
+            for p in self.backbone.parameters():
+                p.requires_grad_(False)
+        else:
+            for p in self.backbone.parameters():
+                p.requires_grad_(True)
+
+            self.backbone.gradient_checkpointing_enable(
+                gradient_checkpointing_kwargs={"use_reentrant": False})
+
+            # Forces train() always on, regardless of who calls
+            # .eval()/.train(mode) from outside (see docstring above).
+            _orig_module_train = nn.Module.train
+
+            def _force_train_mode(self_backbone, mode=True):
+                return _orig_module_train(self_backbone, True)
+
+            self.backbone.train = types.MethodType(_force_train_mode, self.backbone)
+            self.backbone.train()
+
+        in_ch = self.EMBED_DIM * len(self.LAYERS)   # 768 * 4 = 3072
+        self.proj = nn.Sequential(
+            nn.Conv2d(in_ch, self.OUT_CH, kernel_size=1, bias=False),
+            nn.BatchNorm2d(self.OUT_CH),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        ph = (self.PATCH_SIZE - H % self.PATCH_SIZE) % self.PATCH_SIZE
+        pw = (self.PATCH_SIZE - W % self.PATCH_SIZE) % self.PATCH_SIZE
+        if ph or pw:
+            x = F.pad(x, (0, pw, 0, ph))
+        Hp = (H + ph) // self.PATCH_SIZE
+        Wp = (W + pw) // self.PATCH_SIZE
+
+        if self.unlock_backbone:
+            out = self.backbone(pixel_values=x, output_hidden_states=True)
+            feats = []
+            for i in self.LAYERS:
+                # skip [CLS] (index 0) + NUM_REG register tokens
+                t = out.hidden_states[i][:, 1 + self.NUM_REG:, :]
+                t = t.permute(0, 2, 1).reshape(B, self.EMBED_DIM, Hp, Wp)
+                feats.append(t)
+        else:
+            with torch.no_grad():
+                out = self.backbone(pixel_values=x, output_hidden_states=True)
+                feats = []
+                for i in self.LAYERS:
+                    t = out.hidden_states[i][:, 1 + self.NUM_REG:, :]
+                    t = t.permute(0, 2, 1).reshape(B, self.EMBED_DIM, Hp, Wp)
+                    feats.append(t)
+
+        f = torch.cat(feats, dim=1)   # (B, 3072, Hp, Wp)
+        f = self.proj(f)              # (B, 1536, Hp, Wp) -- outside no_grad, trainable
+        # patch_size == 16 => rescale 16/16 = 1 => no interpolation needed
+        return f
+
 
 class LayerNormFunction(torch.autograd.Function):
 
