@@ -71,7 +71,8 @@ cmnet2/
 │   ├── video_full/
 │   │   ├── sample_bw_full.mp4                      # sample 5-min B&W clip for test_video_full.py
 │   │   └── ref/                                    # colored reference frames
-│   └── video_slide/                                # sample video for test_video_slide.py
+│   ├── video_slide/                                # sample video for test_video_slide.py
+│   └── compare/                                    # DINOv2 vs DINOv3 visual comparison (see "Model Variants")
 │
 ├── colormnet/                                      # model source code
 │   ├── models.json                                 # checkpoint file names (see "Model file names")
@@ -292,6 +293,30 @@ B&W film footage. Measured on a 131-clip validation set (full frames, `--max_sid
 DINOv3 improves on both metrics on ~80-85% of individual clips, with no systematic weakness
 on either natural-content (DAVIS) or archival-film clips. Inference is also preliminarily
 ~10% faster on the same hardware.
+
+### Visual comparison (DINOv2 vs DINOv3)
+
+[`assets/compare/`](assets/compare/) contains 54 side-by-side frame comparisons hand-picked from
+a full-length archival B&W film test (an "avvenne domani" test clip, 7222 frames, colorized once
+with each backbone and sampled every 24 frames / 1 per second). Each image is a triptych —
+DINOv2 output | DINOv3 output | a CIEDE2000 (ΔE₀₀) difference heatmap overlaid on the DINOv3
+frame:
+
+![DINOv2 vs DINOv3 sample comparison](assets/compare/frame_004800_heatmap.jpg)
+
+The heatmap uses a **per-frame adaptive threshold** (92nd/99.8th percentile of that frame's own
+ΔE₀₀ distribution, after light denoising) rather than a fixed threshold: the two backbones differ
+by a diffuse, fairly uniform low-level amount almost everywhere, so a fixed threshold either lights
+up the whole frame or hides real localized differences. The adaptive threshold instead highlights,
+in red/orange, only the regions where one backbone diverges from the other *more than the frame's
+own baseline* — which is what reliably surfaces genuinely different color choices (e.g. an object
+or a hand colorized differently) instead of just generic frame-wide grading noise.
+
+**Conclusion:** across this visual sample, **DINOv3 generally produces more accurate and natural
+colors than DINOv2** — consistent with the quantitative PSNR/CIEDE2000 advantage measured above.
+The clearest differences show up on skin tones and small foreground objects/details, where DINOv2
+more often drifts toward flat, desaturated, or plainly wrong colors (e.g. a gray instead of a
+naturally colored hand) that DINOv3 gets right.
 
 ---
 
