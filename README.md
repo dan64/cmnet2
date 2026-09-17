@@ -39,6 +39,13 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 pip install opencv-python pillow scikit-image tqdm numpy transformers
 ```
 
+> **Note on `transformers` compatibility:** the DINOv3 backbone's internal
+> layer naming changed between `transformers` versions (nested
+> `backbone.model.layer.*` in ≥5.x vs flat `backbone.layer.*` in 4.x).
+> CMNET2 detects and adapts to either automatically when loading the
+> checkpoint — no action needed. Both 4.57.6 and 5.5.4 have been verified
+> to load the DINOv3 checkpoint correctly.
+
 ---
 
 ## Directory Structure
@@ -67,6 +74,8 @@ cmnet2/
 │   └── video_slide/                                # sample video for test_video_slide.py
 │
 ├── colormnet/                                      # model source code
+│   ├── models.json                                 # checkpoint file names (see "Model file names")
+│   └── models_config.py                            # models.json loader (get_cmnet2_model, check_file)
 ├── test_imge.py                                    # single image colorization
 ├── test_video.py                                   # video colorization (all refs preloaded)
 ├── test_video_slide.py                             # video colorization (basic sliding window)
@@ -97,6 +106,35 @@ Download the following files and place them in the correct directories (DINOv2 f
 > **Note:** `facebookresearch_dinov2_main/` contains the DINOv2 source code required by
 > `torch.hub` to instantiate the model. Extract the zip so that the folder is located at
 > `models/facebookresearch_dinov2_main/`.
+
+### Model file names (`models.json`)
+
+The names of the checkpoints are not hardcoded in the code: they are stored in a single data
+file, `colormnet/models.json`, shipped with the package:
+
+```json
+{
+  "cmnet2": {
+    "dinov3": {
+      "checkpoint": "DINOv3FeatureV6_LocalAtten_p369412.pth",
+      "weights_dir": "dinov3-vitb16"
+    },
+    "dinov2": {
+      "checkpoint": "DINOv2FeatureV6_LocalAtten_s2_154000.pth"
+    }
+  }
+}
+```
+
+Normally there is no need to touch it. Edit it only if the checkpoint files have different names
+(custom or renamed weights): `checkpoint` is the file inside `weights/`, `weights_dir` is the
+auxiliary directory used by the DINOv3 backbone. When the configured file is missing,
+initialization stops immediately and the error lists the files actually present in the weights
+directory — so a typo in the checkpoint name (e.g. `LocalAttn` instead of `LocalAtten`) is
+immediately visible instead of failing silently.
+
+If `models.json` is missing or malformed, the built-in default names (the ones listed above) are
+used, and a warning is logged via the standard `logging` module.
 
 ---
 

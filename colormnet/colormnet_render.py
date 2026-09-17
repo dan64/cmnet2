@@ -29,6 +29,7 @@ from colormnet.dataset.range_transform import im_normalization, im_rgb2lab_norma
 from colormnet.model.network import ColorMNet
 from colormnet.inference.inference_core import InferenceCore
 from colormnet.util.transforms import lab2rgb_transform_PIL
+from colormnet.models_config import get_cmnet2_model, check_file
 
 DEF_MAX_MEMORY_FRAMES = 1000
 
@@ -110,22 +111,17 @@ class ColorMNetRender:
 
         self.config = {}
         self.config['backbone'] = self.backbone
-        # model checkpoint location (depends on the selected backbone)
-        if self.backbone == 'dinov3':
-            # p369412: trained checkpoint (step 26000, PSNR 36.9412 on
-            # VAL_SUBSET_20, after the BN fix), exported from
-            # training/export_weights.py - no longer *_untrained.pth (which
-            # only had the never-trained backbone/proj, used until a real
-            # production checkpoint existed).
-            self.config['model'] = model_dir = path.join(self.project_dir,
-                                                         'weights/DINOv3FeatureV6_LocalAtten_p369412.pth')
+        # model checkpoint location (depends on the selected backbone; the file
+        # names / auxiliary directories come from models.json)
+        model_info = get_cmnet2_model(self.backbone)
+        self.config['model'] = check_file(
+            path.join(self.project_dir, 'weights', model_info['checkpoint']),
+            f"CMNET2 checkpoint (backbone='{self.backbone}')")
+        if model_info.get('weights_dir'):
             # local project path, NEVER the canonical HuggingFace name (that
             # depends on the user's global cache and is not self-contained in
             # the repo, unlike how all the other weights are managed)
-            self.config['dinov3_weights_dir'] = path.join(self.project_dir, 'weights', 'dinov3-vitb16')
-        else:
-            self.config['model'] = model_dir = path.join(self.project_dir,
-                                                         'weights/DINOv2FeatureV6_LocalAtten_s2_154000.pth')
+            self.config['dinov3_weights_dir'] = path.join(self.project_dir, 'weights', model_info['weights_dir'])
         # Whether the provided reference frame is exactly the first input frame
         self.config['FirstFrameIsNotExemplar'] = not propagate
         # dataset setting

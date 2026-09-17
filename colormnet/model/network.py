@@ -249,15 +249,39 @@ class ColorMNet(nn.Module):
             own_state = self.state_dict()
             NETWORK2_PREFIX = 'key_encoder.network2.'
             filtered = {}
+            remapped = 0
             for k, v in src_dict.items():
                 if not k.startswith(NETWORK2_PREFIX):
                     filtered[k] = v
                     continue
                 if k not in own_state:
-                    logger.warning(
-                        "load_weights (backbone=dinov3): key '%s' absent from the "
-                        "current model, discarded (checkpoint shape=%s)", k, tuple(v.shape))
-                    continue
+                    # Version-dependent naming: the DINOv3 ViT layers sit
+                    # either under an extra 'model' submodule
+                    # ('backbone.model.layer.*', transformers releases where
+                    # the HF encoder wraps itself as self.model) or flat
+                    # ('backbone.layer.*', transformers releases without that
+                    # wrapper). AutoModel.from_pretrained (resnet.py,
+                    # Segmentor_DINOv3) means the structure the
+                    # already-instantiated model expects depends on whichever
+                    # transformers version is installed - it is NOT fixed, so
+                    # try the other naming for the currently instantiated
+                    # model before discarding the key. Same tensors, same
+                    # shapes either way.
+                    old_prefix = NETWORK2_PREFIX + 'backbone.model.layer.'
+                    flat_prefix = NETWORK2_PREFIX + 'backbone.layer.'
+                    alt_k = None
+                    if k.startswith(old_prefix):
+                        alt_k = flat_prefix + k[len(old_prefix):]
+                    elif k.startswith(flat_prefix):
+                        alt_k = old_prefix + k[len(flat_prefix):]
+                    if alt_k is not None and alt_k in own_state:
+                        k = alt_k
+                        remapped += 1
+                    else:
+                        logger.warning(
+                            "load_weights (backbone=dinov3): key '%s' absent from the "
+                            "current model, discarded (checkpoint shape=%s)", k, tuple(v.shape))
+                        continue
                 if tuple(v.shape) != tuple(own_state[k].shape):
                     logger.warning(
                         "load_weights (backbone=dinov3): key '%s' with incompatible "
@@ -265,6 +289,12 @@ class ColorMNet(nn.Module):
                         k, tuple(v.shape), tuple(own_state[k].shape))
                     continue
                 filtered[k] = v
+            if remapped:
+                logger.warning(
+                    "load_weights (backbone=dinov3): %d backbone layer keys remapped "
+                    "between 'backbone.model.layer.*' and 'backbone.layer.*' naming "
+                    "(transformers version mismatch between export and load environments)",
+                    remapped)
             result = self.load_state_dict(filtered, strict=False)
             # strict=False (needed above for the legitimate network2 filter)
             # also acted as a silent safety net for a completely wrong file

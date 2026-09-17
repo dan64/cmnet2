@@ -1,0 +1,11 @@
+{
+  "cmnet2": {
+    "dinov3": {
+      "checkpoint": "DINOv3FeatureV6_LocalAtten_p369412.pth",
+      "weights_dir": "dinov3-vitb16"
+    },
+    "dinov2": {
+      "checkpoint": "DINOv2FeatureV6_LocalAtten_s2_154000.pth"
+    }
+  }
+}
