@@ -6,6 +6,24 @@
 
 ## 📢 What's New
 
+**2026-09-21 — Updated DINOv3 checkpoint (p372402).** Further fine-tuning
+improves quality over the previous DINOv3 checkpoint
+([p369412](https://github.com/dan64/cmnet2/releases/download/v1.1.0/DINOv3FeatureV6_LocalAtten_p369412.pth),
+still available for compatibility). Measured on the same 131-clip
+validation set (full frames, `--max_side` disabled):
+
+| Metric           | DINOv2 (baseline) | DINOv3 p372402 (current) | Δ                 |
+| ---------------- | -----------------:| -------------------------:| -----------------:|
+| PSNR             | 37.68 dB          | **38.29 dB**              | +0.61 dB          |
+| CIEDE2000 (mean) | 3.36              | **3.07**                  | -0.29 (9% better) |
+| CIEDE2000 (p90)  | 7.25              | **6.58**                  | -0.67 (9% better) |
+
+Improves on both metrics on ~88-92% of individual clips (all three
+metrics agree on 83% of clips), with no systematic weakness on either
+natural-content (DAVIS) or archival-film clips. See
+[Model Variants](#model-variants) below for the original p369412
+comparison.
+
 **2026-09-15 — Added DinoV3 backbone.** CMNET2 now supports a fully fine-tuned DINOv3 ViT-B/16
 key-encoder backbone as an alternative to the original frozen DINOv2 ViT-S/14, improving both
 PSNR and perceptual color accuracy (CIEDE2000) with a preliminary ~10% faster inference. See
@@ -54,7 +72,8 @@ pip install opencv-python pillow scikit-image tqdm numpy transformers
 cmnet2/
 ├── weights/
 │   ├── DINOv2FeatureV6_LocalAtten_s2_154000.pth   # ColorMNet pre-trained weights (DINOv2 backbone)
-│   ├── DINOv3FeatureV6_LocalAtten_p369412.pth     # Fine-tuned weights (DINOv3 backbone, recommended)
+│   ├── DINOv3FeatureV6_LocalAtten_p372402.pth     # Fine-tuned weights (DINOv3 backbone, recommended)
+│   ├── DINOv3FeatureV6_LocalAtten_p369412.pth     # Previous DINOv3 checkpoint, kept for compatibility
 │   └── dinov3-vitb16/                              # DINOv3 ViT-B/16 backbone (HuggingFace format)
 │
 ├── models/
@@ -90,9 +109,11 @@ cmnet2/
 
 ## Download Model Weights
 
-Download the following files and place them in the correct directories (DINOv2 files are on the
-[v1.0.0 Release](https://github.com/dan64/cmnet2/releases/tag/v1.0.0), DINOv3 files on the
-[v1.1.0 Release](https://github.com/dan64/cmnet2/releases/tag/v1.1.0)):
+Download the following files and place them in the correct directories
+(DINOv2 files are on the [v1.0.0 Release](https://github.com/dan64/cmnet2/releases/tag/v1.0.0),
+the DINOv3 backbone directory on the [v1.1.0 Release](https://github.com/dan64/cmnet2/releases/tag/v1.1.0),
+and the current recommended DINOv3 checkpoint on the
+[v1.2.0 Release](https://github.com/dan64/cmnet2/releases/tag/v1.2.0)):
 
 | File                                       | Destination           | Download                                                                                                      |
 | ------------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -101,8 +122,9 @@ Download the following files and place them in the correct directories (DINOv2 f
 | `resnet18-5c106cde.pth`                    | `models/checkpoints/` | [download](https://github.com/dan64/cmnet2/releases/download/v1.0.0/resnet18-5c106cde.pth)                    |
 | `resnet50-19c8e357.pth`                    | `models/checkpoints/` | [download](https://github.com/dan64/cmnet2/releases/download/v1.0.0/resnet50-19c8e357.pth)                    |
 | `facebookresearch_dinov2_main.zip`         | extract to `models/`  | [download](https://github.com/dan64/cmnet2/releases/download/v1.0.0/facebookresearch_dinov2_main.zip)         |
-| `DINOv3FeatureV6_LocalAtten_p369412.pth`   | `weights/`            | [download](https://github.com/dan64/cmnet2/releases/download/v1.1.0/DINOv3FeatureV6_LocalAtten_p369412.pth)   |
 | `dinov3-vitb16.zip`                        | extract to `weights/` | [download](https://github.com/dan64/cmnet2/releases/download/v1.1.0/dinov3-vitb16.zip)                        |
+| `DINOv3FeatureV6_LocalAtten_p372402.pth`   | `weights/`            | [download](https://github.com/dan64/cmnet2/releases/download/v1.2.0/DINOv3FeatureV6_LocalAtten_p372402.pth)   |
+| `DINOv3FeatureV6_LocalAtten_p369412.pth`   | `weights/`            | [download](https://github.com/dan64/cmnet2/releases/download/v1.1.0/DINOv3FeatureV6_LocalAtten_p369412.pth)   |
 
 > **Note:** `facebookresearch_dinov2_main/` contains the DINOv2 source code required by
 > `torch.hub` to instantiate the model. Extract the zip so that the folder is located at
@@ -117,7 +139,7 @@ file, `colormnet/models.json`, shipped with the package:
 {
   "cmnet2": {
     "dinov3": {
-      "checkpoint": "DINOv3FeatureV6_LocalAtten_p369412.pth",
+      "checkpoint": "DINOv3FeatureV6_LocalAtten_p372402.pth",
       "weights_dir": "dinov3-vitb16"
     },
     "dinov2": {
@@ -274,14 +296,20 @@ Chroma transfer: L from original full-size + UV from colorized resized → final
 
 CMNET2 ships with two interchangeable key-encoder backbones:
 
-| Backbone                           | Weights file                               | Status                                    |
-| ---------------------------------- | ------------------------------------------ | ----------------------------------------- |
-| DINOv2 ViT-S/14 (frozen)           | `DINOv2FeatureV6_LocalAtten_s2_154000.pth` | Original, kept for backward compatibility |
-| DINOv3 ViT-B/16 (fully fine-tuned) | `DINOv3FeatureV6_LocalAtten_p369412.pth`   | **Recommended**                           |
+| Backbone                                               | Weights file                                | Status                                    |
+| ------------------------------------------------------ | -------------------------------------------- | ------------------------------------------ |
+| DINOv2 ViT-S/14 (frozen)                                | `DINOv2FeatureV6_LocalAtten_s2_154000.pth`   | Original, kept for backward compatibility |
+| DINOv3 ViT-B/16 (fully fine-tuned)                      | `DINOv3FeatureV6_LocalAtten_p372402.pth`     | **Recommended**                           |
+| DINOv3 ViT-B/16 (fully fine-tuned, earlier checkpoint)  | `DINOv3FeatureV6_LocalAtten_p369412.pth`     | Previous release, kept for compatibility  |
 
 The DINOv3 variant was fine-tuned end-to-end (backbone included) on the same reference-based
 colorization loss used for the original ColorMNet training, using a mix of DAVIS and archival
 B&W film footage. Measured on a 131-clip validation set (full frames, `--max_side` disabled):
+
+> The figures below were measured on the
+> [p372402](https://github.com/dan64/cmnet2/releases/download/v1.2.0/DINOv3FeatureV6_LocalAtten_p372402.pth)
+> checkpoint. See [What's New](#-whats-new) for the current p372402
+> benchmark.
 
 | Metric           | DINOv2 (baseline) | DINOv3 (fine-tuned) | Δ                 |
 | ---------------- | -----------------:| -------------------:| -----------------:|
@@ -289,7 +317,7 @@ B&W film footage. Measured on a 131-clip validation set (full frames, `--max_sid
 | CIEDE2000 (mean) | 3.36              | **3.18**            | -0.18 (5% better) |
 | CIEDE2000 (p90)  | 7.25              | **6.80**            | -0.45 (6% better) |
 
-DINOv3 improves on both metrics on ~80-85% of individual clips, with no systematic weakness
+DINOv3 improves on both metrics on ~88-92% of individual clips, with no systematic weakness
 on either natural-content (DAVIS) or archival-film clips. Inference is also preliminarily
 ~10% faster on the same hardware.
 

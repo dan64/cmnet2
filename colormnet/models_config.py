@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 DEFAULTS = {
     "cmnet2": {
         "dinov3": {
-            "checkpoint": "DINOv3FeatureV6_LocalAtten_p369412.pth",
+            "checkpoint": "DINOv3FeatureV6_LocalAtten_p372402.pth",
             "weights_dir": "dinov3-vitb16",
         },
         "dinov2": {
