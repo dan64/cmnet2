@@ -307,7 +307,7 @@ colorization loss used for the original ColorMNet training, using a mix of DAVIS
 B&W film footage. Measured on a 131-clip validation set (full frames, `--max_side` disabled):
 
 > The figures below were measured on the
-> [p372402](https://github.com/dan64/cmnet2/releases/download/v1.2.0/DINOv3FeatureV6_LocalAtten_p372402.pth)
+> [p369412](https://github.com/dan64/cmnet2/releases/download/v1.1.0/DINOv3FeatureV6_LocalAtten_p369412.pth)
 > checkpoint. See [What's New](#-whats-new) for the current p372402
 > benchmark.
 
@@ -317,7 +317,7 @@ B&W film footage. Measured on a 131-clip validation set (full frames, `--max_sid
 | CIEDE2000 (mean) | 3.36              | **3.18**            | -0.18 (5% better) |
 | CIEDE2000 (p90)  | 7.25              | **6.80**            | -0.45 (6% better) |
 
-DINOv3 improves on both metrics on ~88-92% of individual clips, with no systematic weakness
+DINOv3 improves on both metrics on ~80-85% of individual clips, with no systematic weakness
 on either natural-content (DAVIS) or archival-film clips. Inference is also preliminarily
 ~10% faster on the same hardware.
 
