@@ -308,7 +308,25 @@ Off by default, and configurable per-backbone in `models.json` alongside the che
 (see [Model file names](#model-file-names-modelsjson)). This is a newer, opt-in feature without
 a large-scale quantitative benchmark yet (unlike the DINOv2/DINOv3 comparison above) — worth
 trying on content with closely-spaced, visually similar reference frames; less likely to matter
-on sparse or well-separated references.
+on sparse or well-separated references. To permanently enable it by default (useful for permanent
+memory window size > 50) it is necessary to set `enable_proximity_bias=true` in the configuration 
+file stored in: colormnet/models.json as shown in the example below:
+
+```json
+{
+  "cmnet2": {
+    "dinov3": {
+      "checkpoint": "DINOv3FeatureV6_LocalAtten_p372402.pth",
+      "weights_dir": "dinov3-vitb16",
+      "enable_proximity_bias": true,
+      "proximity_bias_alpha": 0.7
+    },
+    "dinov2": {
+      "checkpoint": "DINOv2FeatureV6_LocalAtten_s2_154000.pth"
+    }
+  }
+}
+```
 
 ### Visual example
 
