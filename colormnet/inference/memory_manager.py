@@ -14,6 +14,14 @@ class MemoryManager:
         self.hidden_dim = config['hidden_dim']
         self.top_k = config['top_k']
 
+        # proximity bias: additive penalty on perm_mem_similarity
+        # favoring temporally close reference frames. .get() with defaults,
+        # never config[...] - this class is also constructed from
+        # trainer.py's validation config (do_val()), which does not carry
+        # these keys at all.
+        self.enable_proximity_bias = config.get('enable_proximity_bias', False)
+        self.proximity_bias_alpha = config.get('proximity_bias_alpha', 0.5)
+
         self.enable_long_term = config['enable_long_term']
         self.enable_long_term_usage = config['enable_long_term_count_usage']
         if self.enable_long_term:
@@ -35,6 +43,12 @@ class MemoryManager:
             self.long_mem = KeyValueMemoryStore(count_usage=self.enable_long_term_usage)
         self.perm_mem = KeyValueMemoryStore(count_usage=False)
         self._perm_frame_count = 0
+        # parallel tensor tracking, per perm_mem spatial position, which
+        # source frame_idx it came from - shape (1, N, 1), N in lockstep
+        # with perm_mem.k/v (see add_permanent_memory/slide_permanent_memory
+        # below). kv_memory_store.py is not touched, this tracking lives
+        # entirely here.
+        self.perm_frame_idx = None
 
         self.reset_config = True
 
@@ -42,6 +56,9 @@ class MemoryManager:
         self.reset_config = True
         self.hidden_dim = config['hidden_dim']
         self.top_k = config['top_k']
+
+        self.enable_proximity_bias = config.get('enable_proximity_bias', False)
+        self.proximity_bias_alpha = config.get('proximity_bias_alpha', 0.5)
 
         assert self.enable_long_term == config['enable_long_term'], 'cannot update this'
         assert self.enable_long_term_usage == config['enable_long_term_count_usage'], 'cannot update this'
@@ -53,7 +70,7 @@ class MemoryManager:
             self.num_prototypes = config['num_prototypes']
             self.max_long_elements = config['max_long_term_elements']
 
-    def add_permanent_memory(self, key, shrinkage, value, objects):
+    def add_permanent_memory(self, key, shrinkage, value, objects, frame_idx: int = None):
         """
         Adds key/value to permanent memory.
         These frames are never removed or compressed.
@@ -68,6 +85,20 @@ class MemoryManager:
         value = value.flatten(start_dim=2)  # -> (2, 512, 3087)
         self.perm_mem.add(key, value, shrinkage, None, objects)
         self._perm_frame_count += 1
+
+        if frame_idx is not None:
+            # one scalar frame_idx broadcast over the H*W spatial positions
+            # of this reference frame, kept in lockstep with perm_mem.k/v
+            # (same N growth per call). frame_idx=None (default, all callers
+            # that predate the proximity bias) simply skips this - enable_proximity_bias
+            # stays False for them regardless, so match_memory() never reads
+            # self.perm_frame_idx in that case.
+            frame_idx_tensor = torch.full((1, key.shape[-1], 1), float(frame_idx),
+                                          device=key.device, dtype=torch.float32)
+            if self.perm_frame_idx is None:
+                self.perm_frame_idx = frame_idx_tensor
+            else:
+                self.perm_frame_idx = torch.cat([self.perm_frame_idx, frame_idx_tensor], dim=1)
 
     def slide_permanent_memory(self, n_frames: int):
         """
@@ -87,15 +118,61 @@ class MemoryManager:
             self.perm_mem.s = self.perm_mem.s[:, :, n:]
         for gi in range(self.perm_mem.num_groups):
             self.perm_mem.v[gi] = self.perm_mem.v[gi][:, :, n:]
+        if self.perm_frame_idx is not None:
+            self.perm_frame_idx = self.perm_frame_idx[:, n:, :]
         self._perm_frame_count -= n_frames
 
     def _readout(self, affinity, v):
         # this function is for a single object group
         return v @ affinity
 
-    def match_memory(self, query_key, selection):
+    def _perm_mem_distance_like(self, like: torch.Tensor, perm_mem_size: int, query_frame_idx: int) -> torch.Tensor:
+        # builds a group_distance tensor for do_softmax() - the
+        # RAW temporal distance (query_frame_idx - perm_frame_idx).abs(),
+        # nonzero ONLY on the perm_mem portion (never work_mem/long_mem -
+        # same deliberate scope as the original bias: work_mem/long_mem
+        # already carry an implicit recency signal from how they are
+        # populated/evicted). Replaces the old _perm_mem_bias_like:
+        # the actual penalty (alpha_norm * distance_norm * range_group) can
+        # no longer be precomputed here - range_group depends on the raw
+        # scores of whichever elements actually survive top-k at each query
+        # position, known only inside do_softmax().
+        # `like` is the exact tensor about to be passed to do_softmax as
+        # `similarity` (perm_mem_similarity ++ other groups, in that order -
+        # perm_mem always occupies the first perm_mem_size columns in every
+        # concatenation built below, in both the long-term and no-long-term
+        # branches and for every object group - verified by inspection of
+        # this file, not assumed).
+        # Returned as a broadcast .expand() view, not a materialized dense
+        # tensor of `like`'s full size: verified at the console that
+        # torch.gather() reads an expanded
+        # (stride-0, non-contiguous) tensor correctly and produces the
+        # identical result as a fully materialized one.
+        B, N, HW = like.shape
+        distance = (query_frame_idx - self.perm_frame_idx).abs().float()  # (1, perm_mem_size, 1)
+        zeros_tail = torch.zeros(1, N - perm_mem_size, 1, device=like.device, dtype=like.dtype)
+        dist_col = torch.cat([distance, zeros_tail], dim=1)  # (1, N, 1)
+        return dist_col.expand(B, N, HW)
+
+    def _perm_mem_mask_like(self, like: torch.Tensor, perm_mem_size: int) -> torch.Tensor:
+        # companion to _perm_mem_distance_like, builds the
+        # boolean group_mask for do_softmax() - True on the same perm_mem
+        # columns (see _perm_mem_distance_like for why perm_mem is always
+        # first).
+        # Also an .expand() broadcast view (verified against torch.gather()
+        # on a boolean tensor - not assumed).
+        B, N, HW = like.shape
+        mask_col = torch.zeros(1, N, 1, dtype=torch.bool, device=like.device)
+        mask_col[:, :perm_mem_size] = True
+        return mask_col.expand(B, N, HW)
+
+    def match_memory(self, query_key, selection, query_frame_idx: int = None):
         # query_key: B x C^k x H x W
         # selection:  B x C^k x H x W
+        # query_frame_idx: current frame index (InferenceCore.curr_ti), used
+        # only by the proximity bias. Defaults to None so the
+        # existing step()/InferenceCore call site (no exemplar, never wired
+        # to a per-frame proximity bias) keeps working unchanged.
         num_groups = self.work_mem.num_groups
         h, w = query_key.shape[-2:]
 
@@ -127,9 +204,15 @@ class MemoryManager:
             long_v0 = self.long_mem.get_v_size(0)
             if self.perm_mem.engaged():
                 perm_mem_similarity = similarity[:, :perm_mem_size]
+                combined0 = torch.cat([perm_mem_similarity, long_mem_similarity[:, -long_v0:], work_mem_similarity], 1)
+                group_mask0, group_distance0 = None, None
+                if self.enable_proximity_bias and query_frame_idx is not None:
+                    group_mask0 = self._perm_mem_mask_like(combined0, perm_mem_size)
+                    group_distance0 = self._perm_mem_distance_like(combined0, perm_mem_size, query_frame_idx)
                 affinity, usage = do_softmax(
-                    torch.cat([perm_mem_similarity, long_mem_similarity[:, -long_v0:], work_mem_similarity], 1),
-                    top_k=self.top_k, inplace=True, return_usage=True)
+                    combined0, top_k=self.top_k, inplace=True, return_usage=True,
+                    group_mask=group_mask0, group_distance=group_distance0,
+                    alpha_norm=self.proximity_bias_alpha)
             else:
                 affinity, usage = do_softmax(
                     torch.cat([long_mem_similarity[:, -long_v0:], work_mem_similarity], 1),
@@ -143,9 +226,15 @@ class MemoryManager:
                     long_gi_sim = long_mem_similarity[:, -self.long_mem.get_v_size(gi):]
                     work_gi_sim = work_mem_similarity[:, -self.work_mem.get_v_size(gi):]
                     if self.perm_mem.engaged() and gi < self.perm_mem.num_groups:
+                        combined_gi = torch.cat([perm_mem_similarity, long_gi_sim, work_gi_sim], 1)
+                        group_mask_gi, group_distance_gi = None, None
+                        if self.enable_proximity_bias and query_frame_idx is not None:
+                            group_mask_gi = self._perm_mem_mask_like(combined_gi, perm_mem_size)
+                            group_distance_gi = self._perm_mem_distance_like(combined_gi, perm_mem_size, query_frame_idx)
                         affinity_one_group = do_softmax(
-                            torch.cat([perm_mem_similarity, long_gi_sim, work_gi_sim], 1),
-                            top_k=self.top_k, inplace=True)
+                            combined_gi, top_k=self.top_k, inplace=True,
+                            group_mask=group_mask_gi, group_distance=group_distance_gi,
+                            alpha_norm=self.proximity_bias_alpha)
                     else:
                         affinity_one_group = do_softmax(
                             torch.cat([long_gi_sim, work_gi_sim], 1),
@@ -195,9 +284,15 @@ class MemoryManager:
 
             if self.enable_long_term:
                 if self.perm_mem.engaged():
+                    combined0 = torch.cat([perm_mem_similarity, work_mem_similarity], 1)
+                    group_mask0, group_distance0 = None, None
+                    if self.enable_proximity_bias and query_frame_idx is not None:
+                        group_mask0 = self._perm_mem_mask_like(combined0, perm_mem_size)
+                        group_distance0 = self._perm_mem_distance_like(combined0, perm_mem_size, query_frame_idx)
                     affinity, usage = do_softmax(
-                        torch.cat([perm_mem_similarity, work_mem_similarity], 1),
-                        inplace=(num_groups == 1), top_k=self.top_k, return_usage=True)
+                        combined0, inplace=(num_groups == 1), top_k=self.top_k,
+                        return_usage=True, group_mask=group_mask0, group_distance=group_distance0,
+                        alpha_norm=self.proximity_bias_alpha)
                     work_usage = usage[:, perm_mem_size:]
                 else:
                     affinity, usage = do_softmax(work_mem_similarity, inplace=(num_groups == 1),
@@ -208,9 +303,15 @@ class MemoryManager:
                 self.work_mem.update_usage(work_usage.flatten())
             else:
                 if self.perm_mem.engaged():
+                    combined0 = torch.cat([perm_mem_similarity, work_mem_similarity], 1)
+                    group_mask0, group_distance0 = None, None
+                    if self.enable_proximity_bias and query_frame_idx is not None:
+                        group_mask0 = self._perm_mem_mask_like(combined0, perm_mem_size)
+                        group_distance0 = self._perm_mem_distance_like(combined0, perm_mem_size, query_frame_idx)
                     affinity = do_softmax(
-                        torch.cat([perm_mem_similarity, work_mem_similarity], 1),
-                        inplace=(num_groups == 1), top_k=self.top_k, return_usage=False)
+                        combined0, inplace=(num_groups == 1), top_k=self.top_k,
+                        return_usage=False, group_mask=group_mask0, group_distance=group_distance0,
+                        alpha_norm=self.proximity_bias_alpha)
                 else:
                     affinity = do_softmax(work_mem_similarity, inplace=(num_groups == 1),
                                           top_k=self.top_k, return_usage=False)
@@ -220,10 +321,16 @@ class MemoryManager:
             # compute affinity group by group as later groups only have a subset of keys
             for gi in range(1, num_groups):
                 if self.perm_mem.engaged() and gi < self.perm_mem.num_groups:
+                    combined_gi = torch.cat([perm_mem_similarity,
+                                              work_mem_similarity[:, -self.work_mem.get_v_size(gi):]], 1)
+                    group_mask_gi, group_distance_gi = None, None
+                    if self.enable_proximity_bias and query_frame_idx is not None:
+                        group_mask_gi = self._perm_mem_mask_like(combined_gi, perm_mem_size)
+                        group_distance_gi = self._perm_mem_distance_like(combined_gi, perm_mem_size, query_frame_idx)
                     affinity_one_group = do_softmax(
-                        torch.cat([perm_mem_similarity,
-                                   work_mem_similarity[:, -self.work_mem.get_v_size(gi):]], 1),
-                        top_k=self.top_k, inplace=(gi == num_groups - 1))
+                        combined_gi, top_k=self.top_k, inplace=(gi == num_groups - 1),
+                        group_mask=group_mask_gi, group_distance=group_distance_gi,
+                        alpha_norm=self.proximity_bias_alpha)
                 else:
                     affinity_one_group = do_softmax(work_mem_similarity[:, -self.work_mem.get_v_size(gi):],
                                                     top_k=self.top_k, inplace=(gi == num_groups - 1))

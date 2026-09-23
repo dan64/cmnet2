@@ -71,7 +71,8 @@ class ColorMNetRender:
     def __init__(self, image_size: int = -1, vid_length: int = None, enable_resize: bool = False,
                  encode_mode: int = None, propagate: bool = False, max_memory_frames: int = None,
                  reset_on_ref_update: bool = True, top_k: int = 30, mem_every: int = 5,
-                 project_dir: str = None, backbone: str = "dinov3"):
+                 project_dir: str = None, backbone: str = "dinov3",
+                 enable_proximity_bias: bool = None, proximity_bias_alpha: float = None):
 
         if backbone not in ("dinov2", "dinov3"):
             raise ValueError(f"unknown backbone: {backbone!r} (allowed values: 'dinov2', 'dinov3')")
@@ -79,6 +80,21 @@ class ColorMNetRender:
         self.reset_on_ref_update = reset_on_ref_update  # deprecated with XMem2
         self.top_k = top_k
         self.mem_every = mem_every
+        # proximity bias: additive penalty on perm_mem_similarity
+        # favoring temporally close reference frames. Both
+        # enable_proximity_bias/proximity_bias_alpha default to None here
+        # (not passed explicitly) so _colorize_config_init() can tell that
+        # apart from a deliberate value and fall back to
+        # models.json/DEFAULTS - same precedence for both:
+        # constructor/CLI > models.json > hardcoded fallback (False/0.5).
+        # Default in models.json/DEFAULTS stays False - existing
+        # behavior unchanged unless explicitly opted in, same principle
+        # already used for top_k/mem_every/lambda_temporal.
+        # proximity_bias_cap removed: dead weight since the bias
+        # moved inside torch.softmax(), which is already robust
+        # to any magnitude - see memory_manager.py::_proximity_penalty().
+        self.enable_proximity_bias = enable_proximity_bias
+        self.proximity_bias_alpha = proximity_bias_alpha
         self.enable_resize = enable_resize
         if project_dir is None:
             project_dir = os.path.dirname(os.path.realpath(__file__))
@@ -112,7 +128,8 @@ class ColorMNetRender:
         self.config = {}
         self.config['backbone'] = self.backbone
         # model checkpoint location (depends on the selected backbone; the file
-        # names / auxiliary directories come from models.json)
+        # names / auxiliary directories / proximity-bias defaults come from
+        # models.json, see colormnet/models_config.py)
         model_info = get_cmnet2_model(self.backbone)
         self.config['model'] = check_file(
             path.join(self.project_dir, 'weights', model_info['checkpoint']),
@@ -137,6 +154,20 @@ class ColorMNetRender:
         self.config['top_k'] = self.top_k
         self.config['mem_every'] = min(self.mem_every, self.config[
             'max_mid_term_frames'])  # r in paper. Increase to improve running speed
+        # precedence: explicit constructor/CLI value > models.json > hardcoded
+        # fallback - not an implicit merge, kept readable as
+        # two explicit "was it passed at all" checks. model_info.get(...,
+        # default) also covers the 'dinov2' entry, which deliberately has no
+        # enable_proximity_bias/proximity_bias_alpha keys (see models.json)
+        # - the bias stays dinov3-specific.
+        if self.enable_proximity_bias is None:
+            self.enable_proximity_bias = model_info.get('enable_proximity_bias', False)
+        if self.backbone != 'dinov3':
+            self.enable_proximity_bias = False
+        if self.proximity_bias_alpha is None:
+            self.proximity_bias_alpha = model_info.get('proximity_bias_alpha', 0.5)
+        self.config['enable_proximity_bias'] = self.enable_proximity_bias
+        self.config['proximity_bias_alpha'] = self.proximity_bias_alpha
         self.config['deep_update_every'] = -1  # Leave -1 normally to synchronize with mem_every
         # Multi-scale options
         self.config['save_scores'] = False
@@ -194,10 +225,13 @@ class ColorMNetRender:
                 self.ref_count_prv = 0
             self.ref_count = self.frame_count
 
-    def preload_reference(self, ref_img: Image):
+    def preload_reference(self, ref_img: Image, frame_idx: int = None):
         """
         Preloads a reference frame into perm_mem before starting colorization.
         Can be called N times consecutively.
+        frame_idx: source frame index of this reference, used by the
+            optional proximity bias. None (default) skips
+            proximity-bias tracking for this frame.
         """
         if self.processor is None:
             return
@@ -210,7 +244,7 @@ class ColorMNetRender:
         if self.processor.all_labels is None:
             self.processor.set_all_labels(list(range(1, 3)))
 
-        self.processor.load_reference(img_lll, img_ab)
+        self.processor.load_reference(img_lll, img_ab, frame_idx=frame_idx)
 
     def slide_permanent_memory(self, n_frames: int):
         """

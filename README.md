@@ -6,6 +6,17 @@
 
 ## 📢 What's New
 
+**2026-09-23 — Added optional proximity-weighted memory matching
+(`--enable_proximity_bias`, DINOv3 only).** When several `perm_mem`
+reference frames match a frame's content similarly well — the scenario
+flagged in the `--window_size` note below, where visually similar but
+differently-colored references can get blended toward gray — CMNET2 can
+now break ties by favoring temporally closer references, without ever
+reducing `perm_mem`'s overall contribution relative to `work_mem`/
+`long_mem`. Off by default. See
+[Proximity-weighted memory matching](#proximity-weighted-memory-matching-optional-dinov3-only)
+for details.
+
 **2026-09-21 — Updated DINOv3 checkpoint (p372402).** Further fine-tuning
 improves quality over the previous DINOv3 checkpoint
 ([p369412](https://github.com/dan64/cmnet2/releases/download/v1.1.0/DINOv3FeatureV6_LocalAtten_p369412.pth),
@@ -140,7 +151,9 @@ file, `colormnet/models.json`, shipped with the package:
   "cmnet2": {
     "dinov3": {
       "checkpoint": "DINOv3FeatureV6_LocalAtten_p372402.pth",
-      "weights_dir": "dinov3-vitb16"
+      "weights_dir": "dinov3-vitb16",
+      "enable_proximity_bias": false,
+      "proximity_bias_alpha": 0.7
     },
     "dinov2": {
       "checkpoint": "DINOv2FeatureV6_LocalAtten_s2_154000.pth"
@@ -150,8 +163,11 @@ file, `colormnet/models.json`, shipped with the package:
 ```
 
 Normally there is no need to touch it. Edit it only if the checkpoint files have different names
-(custom or renamed weights): `checkpoint` is the file inside `weights/`, `weights_dir` is the
-auxiliary directory used by the DINOv3 backbone. When the configured file is missing,
+(custom or renamed weights) or you want to change the default proximity-bias settings:
+`checkpoint` is the file inside `weights/`, `weights_dir` is the auxiliary directory used by the
+DINOv3 backbone, and `enable_proximity_bias`/`proximity_bias_alpha` set the default for
+[proximity-weighted memory matching](#proximity-weighted-memory-matching-optional-dinov3-only)
+(DINOv3 only — ignored for DINOv2). When the configured file is missing,
 initialization stops immediately and the error lists the files actually present in the weights
 directory — so a typo in the checkpoint name (e.g. `LocalAttn` instead of `LocalAtten`) is
 immediately visible instead of failing silently.
@@ -235,6 +251,9 @@ python test_video_full.py \
 > 20 and 50 works well for most content; go higher only if your reference
 > frames are extracted densely (redundant, not conflicting), or lower
 > `--top_k` (e.g. 10-15) if you need to keep a wide window regardless.
+> See also
+> [proximity-weighted memory matching](#proximity-weighted-memory-matching-optional-dinov3-only)
+> below, which targets this same failure mode directly.
 
 **CLI parameters:**
 
@@ -252,6 +271,59 @@ python test_video_full.py \
 | --------------------------------- | ---- | --------------------------- |
 | Full resolution, no resize        | 2.63 | Best quality                |
 | Resize to 512px + chroma transfer | 5.80 | Recommended for long videos |
+
+---
+
+### Proximity-weighted memory matching (optional, DINOv3 only)
+
+By default, `perm_mem` candidates are ranked purely by content similarity — the memory
+readout has no notion of *when* in the video a reference frame was captured relative to the
+frame being colorized. This is exactly the scenario flagged in the `--window_size` note above:
+with a wide window holding several visually similar but differently-colored references, the
+top-k match can end up blending frames that shouldn’t be blended equally, washing the result
+toward gray.
+
+`--enable_proximity_bias` adds an optional, additive penalty — scaled to the actual spread of
+similarity scores among a frame’s surviving top-k candidates, not a fixed constant — that
+favors temporally closer `perm_mem` references over farther ones *among otherwise-comparable
+candidates*. It never reduces `perm_mem`’s total contribution relative to `work_mem`/`long_mem`:
+the aggregate weight `perm_mem` would have received without the bias is preserved exactly —
+only redistributed internally, by proximity.
+
+```bash
+python test_video_full.py \
+  --input       assets/video_full/sample_bw_full.mp4 \
+  --ref_path    assets/video_full/ref/ \
+  --output      assets/video_full/output.mp4 \
+  --enable_proximity_bias \
+  --proximity_bias_alpha 0.7
+```
+
+| Parameter                 | Default                    | Description                                                                                    |
+| -------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
+| `--enable_proximity_bias` | off                         | Enable proximity-weighted matching. **DINOv3 only** — silently has no effect on DINOv2.       |
+| `--proximity_bias_alpha`  | `0.7` (from `models.json`) | Strength of the temporal-proximity preference, relative to the frame’s own similarity spread. `0` ≈ off; higher values favor the closest reference more strongly. |
+
+Off by default, and configurable per-backbone in `models.json` alongside the checkpoint name
+(see [Model file names](#model-file-names-modelsjson)). This is a newer, opt-in feature without
+a large-scale quantitative benchmark yet (unlike the DINOv2/DINOv3 comparison above) — worth
+trying on content with closely-spaced, visually similar reference frames; less likely to matter
+on sparse or well-separated references.
+
+### Visual example
+
+![Proximity bias effect, frame 384](assets/proximity/frame_000384_progression3.png)
+
+Same frame colorized with the bias off, at `alpha=0.5`, and at `alpha=0.9` (top-left,
+top-right, bottom-left), plus a ΔE₀₀ heatmap between the off and `alpha=0.9` outputs
+(bottom-right), using the same adaptive-threshold methodology described under
+[Visual comparison](#visual-comparison-dinov2-vs-dinov3) above. Most of the frame is
+diffuse yellow — the same low-level rendering noise seen between backbones elsewhere in
+this README, not a systematic shift. Two red (strongly-differing) regions stand out on the
+left: the upper one is just a highlight on a lamp, not meaningful; the lower one is the
+seated woman's arm resting near the piano, which shifts from a flat, slightly-off tan
+(bias off) to a warmer, more natural skin tone as the bias is enabled — a case where
+favoring a closer, better-matching reference measurably improves the result.
 
 ---
 
@@ -360,12 +432,17 @@ colorizer = ColorMNetRender(
     encode_mode=1,          # 0=remote, 1=async, 2=sync
     top_k=30,               # memory matching top-K
     mem_every=5,            # working memory update frequency
+    enable_proximity_bias=False, # DINOv3 only, see "Proximity-weighted memory matching"
+    proximity_bias_alpha=0.7,    # strength, only used when enabled
     project_dir="."
 )
 
 # Option A : preload all references before colorization
-for ref_img in reference_images:
-    colorizer.preload_reference(ref_img)          # loads into perm_mem
+for i, ref_img in enumerate(reference_images):
+    colorizer.preload_reference(ref_img, frame_idx=i)  # loads into perm_mem;
+                                                       # frame_idx (optional) is needed
+                                                       # for --enable_proximity_bias to
+                                                       # take effect for this reference
 
 colorizer.set_ref_frame(reference_images[0])      # initialize work_mem
 frame_colored = colorizer.colorize_frame(ti=0, frame_i=grayscale_frame)
@@ -423,6 +500,7 @@ confirmed as a controlled measurement.
 | Feature                | Original ColorMNet         | CMNET2                                      |
 | ---------------------- | -------------------------- | ------------------------------------------- |
 | Memory stores          | working + long-term        | **permanent** + working + long-term         |
+| Memory matching         | content similarity only    | content similarity + optional **proximity bias** (temporal distance, DINOv3 only) |
 | Reference handling     | passed with each frame     | **preloadable in bulk** before inference    |
 | Long video support     | resets memory periodically | **sliding window** over permanent memory    |
 | VRAM pressure response | full reset                 | **graduated**: slide 70% → full reset       |

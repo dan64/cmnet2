@@ -27,6 +27,8 @@ DEFAULTS = {
         "dinov3": {
             "checkpoint": "DINOv3FeatureV6_LocalAtten_p372402.pth",
             "weights_dir": "dinov3-vitb16",
+            "enable_proximity_bias": False,
+            "proximity_bias_alpha": 0.5,
         },
         "dinov2": {
             "checkpoint": "DINOv2FeatureV6_LocalAtten_s2_154000.pth",

@@ -5,7 +5,7 @@ import cv2
 from tqdm import tqdm
 from PIL import Image
 from skimage import color
-from argparse import ArgumentParser
+from argparse import ArgumentParser, BooleanOptionalAction
 from pathlib import Path
 import sys
 
@@ -39,6 +39,12 @@ def main():
     parser.add_argument('--output', default='./assets/video_slide/sample_bw_slide_cmnet2.mp4', help='Colorized output')
     parser.add_argument('--backbone', choices=['dinov2', 'dinov3'], default='dinov3',
                         help='Key encoder backbone (default: dinov3)')
+    parser.add_argument('--enable_proximity_bias', action=BooleanOptionalAction, default=None,
+        help='Additive penalty on perm_mem similarity favoring temporally close reference frames. '
+             'Default: value from models.json (False). Use --no-enable_proximity_bias '
+             'to force it off even if models.json enables it.')
+    parser.add_argument('--proximity_bias_alpha', type=float, default=None,
+        help='Penalty per frame of temporal distance. Default: value from models.json (0.5).')
     args = parser.parse_args()
 
     torch.hub.set_dir(model_dir)
@@ -66,14 +72,15 @@ def main():
     print("--- Loading CMNET2 model ---")
     colorizer = ColorMNetRender(vid_length=total_frames, enable_resize=False, encode_mode=1,
                                 max_memory_frames=total_frames, reset_on_ref_update=False, project_dir=package_dir,
-                                backbone=args.backbone)
+                                backbone=args.backbone, enable_proximity_bias=args.enable_proximity_bias,
+                                proximity_bias_alpha=args.proximity_bias_alpha)
 
     # phase 1: preload the first WINDOW_SIZE references
     print("Preloading references...")
     refs_loaded = 0
-    for f in refs[:WINDOW_SIZE]:
+    for k, f in enumerate(refs[:WINDOW_SIZE]):
         ref = Image.open(os.path.join(args.ref_path, f)).convert('RGB')
-        colorizer.preload_reference(ref)
+        colorizer.preload_reference(ref, frame_idx=refs_id[k])
         refs_loaded += 1
     refs_queue_idx = refs_loaded  # index of the next ref to load
 
@@ -94,9 +101,9 @@ def main():
             oldest_ref_still_needed = refs_id[refs_queue_idx - WINDOW_SIZE + SLIDE_STEP]
             if i > oldest_ref_still_needed:
                 colorizer.slide_permanent_memory(SLIDE_STEP)
-                for f in refs[refs_queue_idx:refs_queue_idx + SLIDE_STEP]:
+                for k, f in enumerate(refs[refs_queue_idx:refs_queue_idx + SLIDE_STEP], start=refs_queue_idx):
                     ref = Image.open(os.path.join(args.ref_path, f)).convert('RGB')
-                    colorizer.preload_reference(ref)
+                    colorizer.preload_reference(ref, frame_idx=refs_id[k])
                 refs_queue_idx += SLIDE_STEP
         # first frame: pass the ref normally to initialize work_mem
         colorizer.set_ref_frame(first_ref if i == 0 else None)

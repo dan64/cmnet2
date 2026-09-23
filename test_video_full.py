@@ -6,7 +6,7 @@ import cv2
 from tqdm import tqdm
 from PIL import Image
 from skimage import color
-from argparse import ArgumentParser
+from argparse import ArgumentParser, BooleanOptionalAction
 from pathlib import Path
 import sys
 
@@ -73,7 +73,7 @@ def chroma_transfer(original_bgr: np.ndarray, colorized_small: Image.Image) -> n
     return cv2.cvtColor(orig_yuv, cv2.COLOR_YUV2BGR)
 
 
-def compute_window_size_auto(colorizer, refs: list, ref_path: str,
+def compute_window_size_auto(colorizer, refs: list, refs_id: list, ref_path: str,
                               proc_w: int, proc_h: int, do_resize: bool,
                               vram_threshold: float = 0.30, max_window_size: int = 50) -> int:
     """
@@ -84,7 +84,7 @@ def compute_window_size_auto(colorizer, refs: list, ref_path: str,
     gpu_mem_free, gpu_mem_total = torch.cuda.mem_get_info()
     vram_limit = round(round(gpu_mem_total / 1024 / 1024, 1) * vram_threshold,0)
     loaded = 0
-    for f in refs:
+    for k, f in enumerate(refs):
         gpu_mem_free, gpu_mem_total = torch.cuda.mem_get_info()
         gpu_mem_k = round(gpu_mem_free / 1024 / 1024, 1)
         if gpu_mem_k < vram_limit or loaded > max_window_size:
@@ -92,7 +92,7 @@ def compute_window_size_auto(colorizer, refs: list, ref_path: str,
         ref = Image.open(os.path.join(ref_path, f)).convert('RGB')
         if do_resize:
             ref = ref.resize((proc_w, proc_h), Image.LANCZOS)
-        colorizer.preload_reference(ref)
+        colorizer.preload_reference(ref, frame_idx=refs_id[k])
         loaded += 1
         if loaded % 10 == 0:
             torch.cuda.empty_cache()  # empty cache from tensors not more referenced
@@ -116,6 +116,12 @@ def main():
         help='Store a frame in working memory every N frames (default 5, try 10 for speed).')
     parser.add_argument('--backbone', choices=['dinov2', 'dinov3'], default='dinov3',
         help='Key encoder backbone (default: dinov3)')
+    parser.add_argument('--enable_proximity_bias', action=BooleanOptionalAction, default=None,
+        help='Additive penalty on perm_mem similarity favoring temporally close reference frames. '
+             'Default: value from models.json (False). Use --no-enable_proximity_bias '
+             'to force it off even if models.json enables it.')
+    parser.add_argument('--proximity_bias_alpha', type=float, default=None,
+        help='Penalty per frame of temporal distance. Default: value from models.json (0.5).')
     args = parser.parse_args()
 
     torch.hub.set_dir(model_dir)
@@ -156,23 +162,25 @@ def main():
     print("--- Loading CMNET2 model ---")
     colorizer = ColorMNetRender(vid_length=total_frames, encode_mode=1, max_memory_frames=total_frames,
                                 reset_on_ref_update=False, top_k=args.top_k, mem_every=args.mem_every,
-                                project_dir=package_dir, backbone=args.backbone)
+                                project_dir=package_dir, backbone=args.backbone,
+                                enable_proximity_bias=args.enable_proximity_bias,
+                                proximity_bias_alpha=args.proximity_bias_alpha)
 
     # phase 1: preload the first WINDOW_SIZE references
     print("Preloading references...")
     if AUTO_WINDOW:
         refs_loaded = compute_window_size_auto(
-            colorizer, refs, args.ref_path, proc_w, proc_h, do_resize)
+            colorizer, refs, refs_id, args.ref_path, proc_w, proc_h, do_resize)
         WINDOW_SIZE = refs_loaded
         SLIDE_STEP = max(1, round(WINDOW_SIZE * 0.2 + 0.5))
         print(f"Auto window size: {WINDOW_SIZE} refs, slide step: {SLIDE_STEP}")
     else:
         refs_loaded = 0
-        for f in refs[:WINDOW_SIZE]:
+        for k, f in enumerate(refs[:WINDOW_SIZE]):
             ref = Image.open(os.path.join(args.ref_path, f)).convert('RGB')
             if do_resize:
                 ref = ref.resize((proc_w, proc_h), Image.LANCZOS)
-            colorizer.preload_reference(ref)
+            colorizer.preload_reference(ref, frame_idx=refs_id[k])
             refs_loaded += 1
 
     refs_queue_idx = refs_loaded
@@ -197,11 +205,11 @@ def main():
             oldest_ref_still_needed = refs_id[refs_queue_idx - WINDOW_SIZE + SLIDE_STEP]
             if i > oldest_ref_still_needed:
                 colorizer.slide_permanent_memory(SLIDE_STEP)
-                for f in refs[refs_queue_idx:refs_queue_idx + SLIDE_STEP]:
+                for k, f in enumerate(refs[refs_queue_idx:refs_queue_idx + SLIDE_STEP], start=refs_queue_idx):
                     ref = Image.open(os.path.join(args.ref_path, f)).convert('RGB')
                     if do_resize:
                         ref = ref.resize((proc_w, proc_h), Image.LANCZOS)
-                    colorizer.preload_reference(ref)
+                    colorizer.preload_reference(ref, frame_idx=refs_id[k])
                 refs_queue_idx += SLIDE_STEP
 
         t0 = time.perf_counter()
