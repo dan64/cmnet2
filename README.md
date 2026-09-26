@@ -56,7 +56,7 @@ comparison.
 
 **2026-09-15 — Added DinoV3 backbone.** CMNET2 now supports a fully fine-tuned DINOv3 ViT-B/16
 key-encoder backbone as an alternative to the original frozen DINOv2 ViT-S/14, improving both
-PSNR and perceptual color accuracy (CIEDE2000) with a preliminary ~10% faster inference. See
+PSNR and perceptual color accuracy (CIEDE2000). See
 [Model Variants](#model-variants) for the full comparison and [Key Features](#key-features)
 below for a summary.
 
@@ -70,7 +70,7 @@ below for a summary.
 - **Sliding window memory management** : for long videos with thousands of reference frames, a configurable sliding window evicts the oldest references and loads new ones as the video progresses, keeping VRAM usage bounded.
 - **Adaptive VRAM management** : gradual memory pressure response: slides 70% of permanent memory when VRAM drops below 500 MB, full reset only as a last resort below 100 MB.
 - **DINOv2 + ResNet50 fusion backbone** : multi-scale key features are extracted by fusing DINOv2 ViT-S/14 semantic features with ResNet50 spatial features at 1/4, 1/8, and 1/16 scales.
-- **DINOv3 backbone (default, recommended)** : an alternative key-encoder backbone using a fully fine-tuned DINOv3 ViT-B/16 in place of the frozen DINOv2 ViT-S/14, trained end-to-end on the same reference-based colorization loss. Improves both PSNR and perceptual color accuracy (CIEDE2000) across a 131-clip validation set spanning DAVIS and archival B&W film footage, with a preliminary ~10% faster inference (see [Model Variants](#model-variants)).
+- **DINOv3 backbone (default, recommended)** : an alternative key-encoder backbone using a fully fine-tuned DINOv3 ViT-B/16 in place of the frozen DINOv2 ViT-S/14, trained end-to-end on the same reference-based colorization loss. Improves both PSNR and perceptual color accuracy (CIEDE2000) across a 131-clip validation set spanning DAVIS and archival B&W film footage (see [Model Variants](#model-variants)).
 - **GPU-accelerated LAB→RGB conversion** : `lab2rgb` implemented with exact CIE formulas on GPU via PyTorch, replacing the CPU-bound skimage conversion (-14% total frame time).
 - **Chroma transfer pipeline** : optional input resize + YUV chroma transfer for a 3× speedup on full-resolution videos, with no perceptible quality loss.
 
@@ -430,8 +430,7 @@ B&W film footage. Measured on a 131-clip validation set (full frames, `--max_sid
 | CIEDE2000 (p90)  | 7.25              | **6.80**            | -0.45 (6% better) |
 
 DINOv3 improves on both metrics on ~80-85% of individual clips, with no systematic weakness
-on either natural-content (DAVIS) or archival-film clips. Inference is also preliminarily
-~10% faster on the same hardware.
+on either natural-content (DAVIS) or archival-film clips.
 
 ### Visual comparison (DINOv2 vs DINOv3)
 
@@ -528,10 +527,7 @@ This yields a **3× speedup** (1.94 → 5.80 FPS on 960×730) with no perceptibl
 
 ### DINOv3 backbone
 
-See [Model Variants](#model-variants) for the full quality comparison. Beyond the quality
-improvement, early benchmarks show inference running ~10% faster than the DINOv2 backbone
-on the same hardware, likely due to the different key-encoder architecture — not yet
-confirmed as a controlled measurement.
+See [Model Variants](#model-variants) for the full quality comparison.
 
 ---
 
